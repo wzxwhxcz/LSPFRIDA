@@ -1,0 +1,60 @@
+{
+  "name": "frida-inject-analysis",
+  "id": "frida-inject-analysis",
+  "description": "拆解算法助手Pro（com.junge.algorithmAidePro，1.1.0 debug，22.8MB）的 Frida 注入逻辑：① Frida 依赖形态（frida-gadget 静态注入/动态加载/frida-server 外部/自实现 GumJS？——dex 与 .so 双重证据）；② 注入链路（Application/Activity 入口、System.loadLibrary、gadget 配置 assets/frida-gadget.config？、注入到哪个进程/目标）；③ 与 LSPFRIFA（GumJsBridge + TargetIpcServer + Miuix UI 自研注入）的对比与可借鉴点。产出拆解报告（类→方法→机制→字符串证据，与 LSPRFIFA 对齐口径：不照搬，学组织/能力/反馈模式）。",
+  "captainSessionId": "session-7f1033d6-1781-424f-9d56-729ee1530c40",
+  "createdAt": 1787554128080,
+  "members": [
+    {
+      "id": "ecf9f53d-2b4e-4076-9450-ebca42d61df0",
+      "name": "frida-researcher",
+      "role": "Frida injection reverse engineer",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787554138334,
+      "status": "removed"
+    },
+    {
+      "id": "e6882796-db87-4350-9b50-30fe4ae33053",
+      "name": "inject-integrator",
+      "role": "injection report integrator",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787554138967,
+      "status": "removed"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "subject": "拆解算法助手Pro 的 Frida 注入逻辑",
+      "description": "用 MT MCP 拆解算法助手Pro（APK 路径：算法助手Pro_1.1.0 debug.apk，包 com.junge.algorithmAidePro，workspace 未开可 mt_apk_open 打开，temporary=false 复用）的 Frida 注入逻辑：\n1. 【依赖形态】lib/*/*.so 列表（找 frida-gadget/frida-agent/libgadget/注入器/调试器 so；关注 arm64-v8a）；dex 字符串搜索 \"frida\"/\"gadget\"/\"FridaRuntime\"/\"gumjs\"/\"scoped-lock\" 精确区分：自实现注入 vs frida-gadget 静态 vs 仅 frida-server 外部工具\n2. 【注入链路】manifest 入口（Application/Activity 名）、Application.onCreate / 入口 Activity 的启动链、System.loadLibrary(\"...\") 调用点、assets/ 里 frida-gadget.config.json / script.js 存在与否、native 层 JNI_OnLoad（有 .so 时 native_inspect/native_symbols 看初始化）\n3. 【注入目标】gadget 配置的 target（configure/dependency/配置体）、脚本如何送达（assets 脚本/预打包/resources/远程下载）\n4. 【UI 关联】算法助手自己是否也有 logcat 日志/状态显示（对照 LSPFRIFA 的错误反馈方式）\n产出：Markdown 拆解报告（类/文件→机制→关键证据字符串），直接输出到最终结果；每项标注证据来源（zip 条目/dex 类/字符串/符号）。禁编造、无证据标注\"未确认\"。",
+      "status": "completed",
+      "assignee": "frida-researcher",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787554153308,
+      "updatedAt": 1787554865987,
+      "attemptId": "424c7de0-d33a-4d1b-8212-7a9706a9957e",
+      "reassigning": false,
+      "output": "# 算法助手Pro 1.1.0 debug — Frida 注入逻辑拆解报告\n\nworkspace: s45zrswn（APK 22.8MB，1 dex 4117 类，签名 CN=Siyu/OU=E4A 南昌）\n\n## 0. 结论（判定）\n**自实现注入**：算法助手Pro 是一个 **Xposed 模块**（旧版 de.robv.android.xposed API，xposedminversion=54，目标 LSPosed/BlackBox/VirtualXposed/VMOS），通过 Xposed 把**内嵌 Frida 运行时（gumjs+QuickJS，基于 frida 官方官方 CI 构建树的定制 .so）**以\"Binder 流式传输 + System.load\"的方式注入目标 App 进程。**不是**标准 frida-gadget 静态嵌入（无 libfrida-gadget.so、无 .frida section、无 \"Gadget\"/\"frida-gadget\" 字符串），也**不是** frida-server 外部工具（无 frida-server/root 依赖）。\n\n## 1. 依赖形态\nlib/*/*.so（zip_entries）：\n- arm64-v8a：libalgorithmAidePro.so（6,124,408B，frida 运行时定制版）、libcrashsdk.so（647,928B，UC crashsdk：dex com.uc.crashsdk.* JNIBridge）、libumeng-spy.so（239,848B，友盟 com_umeng_umzid_Spy_getNativeID，.dynstr 证据）\n- armeabi-v7a：同 3 个（libalgorithmAidePro.so 4.2MB）\n- x86_64：仅 libalgorithmAidePro.so（7.2MB，无 crash/umeng——模拟器精简）\n- **无任何 frida-gadget/agent/注入器命名的 so**（empty libfrida 系列全无）\n- dex 字面量：\"frida\" 22 命中（FridaLog/FridaLogData/FridaScriptData/FridaScriptAppData/FridaLogFrameCodec/db FridaLogDataDao + \"Frida pipe failed/closed: package=\" + \"Frida日志已清理\"）；\"gadget\" 0、\"FridaRuntime\" 0、\"gumjs\" 0、\"scoped-lock\" 0（dex+native 均无）\n- native 字符串：\"GumJS\" 2 处（\"Unable to create GumJS script: %s\"@0x4b901、\"Unable to start GumJS main loop\"@0x65c21）；frida runtime 全套：/frida/runtime/entrypoint-quickjs.js、core.js、message-dispatcher.js、error-handler-quickjs.js、console.js、hexdump.js、worker.js、_frida_worker_runtime.js、/frida/bridges/java.js、frida:rpc、tcc \"0.9.27-frida\"、构建路径 /__w/frida/frida/deps/src/_sdk.out/android-arm64/...（官方 frida CI 构建树佐证）\n\n## 2. 注入链路\n- **宿主 app**：Application=MyApplication；LAUNCHER=SplashActivity→MainActivity；进程内服务/组件：McpServerService（MCP！）、FloatingKeepAliveService、ConfigProvider(authorities=algorithmAidePro, exported)、AlgorithmServiceProvider(process=:algorithm_ipc, exported, AIDL IAlgorithmService)\n- **Xposed 入口**：assets/xposed_init → com.junge.algorithmAidePro.hook.XpInit（implements IXposedHookLoadPackage）；manifest xposedmodule=true / xposeddescription=\"算法助手，做最好的调试工具\" / xposedsharedprefs=true / xposedscope=@7F030003\n- **触发链**（目标进程内）：XpInit.handleLoadPackage(829 instr) → new XpInit$a(XC_MethodHook) → XposedBridge.hookAllMethods(加密类名,加密方法名, hook)【具体类/方法为运行期字符串解密，未确认】→ XpInit$a.beforeHookedMethod → XpInit.a(context) → `Ll3/h.newInstance()`(=NativeHook, extends Ll3/p) → `NativeHook.b(ConfigReader.getInstanceByHookApp(ctx, packageName))`\n- **so 传输（Lg3/e=LibraryLoader.b()，smali 直读）**：`<ctx>/lib` 目录 → `AlgorithmClient.getClient(ctx).service_getLibrary(\"libalgorithmAidePro.so\", abi)`（跨进程 Binder 从宿主 :algorithm_ipc 拉 PFD）→ 写 `<ctx>/lib/<UUID>` → `System.load(绝对路径)` → 删除临时文件；a()=Process.is64Bit+ABI 探测（arm64-v8a/armeabi-v7a/x86_64）；logcat tag \"LibraryLoader\"（\"service_getLibrary returned null for...\"/\"Copied so file from IPC:...\"/\"copyMySoFromIPC error\"）。先查已加载 HashSet 防重复。\n- **native 初始化**：符号表导出 JNI_OnLoad@0x39abdc、hookNetwork、hookSignal、print_stacktrace；JNI_OnLoad 反汇编 = GetEnv → **RegisterNatives(env, cls@0x432cc, 表, 6)**（wrapper@0x39a9dc 调用 JNIEnv 槽 0x6b8=RegisterNatives）——6 个 native 与 NativeHook 完全对应：init(String)V / loadScript(String,String)I / setFridaLogPipe(I)Z / isFridaLogPipeReady()Z / unload()I / hookNetwork()I\n- assets/：**无** frida-gadget.config.json、**无** script.js（有 eula.html/help.zh.html/log.html/webui/index.html/xposed_init）\n\n## 3. 注入目标 / 配置体 / 脚本送达\n- **target=Xposed 作用域**：默认 xposed_scope（resource 0x7f030003）= `android` + `com.reqable.android`（系统框架 + Reqable 抓包工具）；用户经 LSP 自定义；另支持 VirtualXposed（dex La3/g 引用 content://me.weishu.exposed.CP/，help FAQ 提到 BlackBox/VMOS）\n- **配置体**：无 .frida section（27 个 section 无 .frida；虽有残留字符串 \"--only-section=.frida\"@0x44911 说明以 gadget 源码为基础编译）；配置走**自定义 JNI 通道**——native 置入 `globalThis.__algorithmAideBootstrap`，内嵌 bootstrap JS（.rodata@0xb3846 解码，含注释 \"runs before every user script\"）：`const bootstrap = globalThis.__algorithmAideBootstrap; ...installFrida17Compatibility(); installLazyJavaBridge(patchJavaBridge(bootstrap.bridgeSource)); Script.evaluate(bootstrap.userScriptName, bootstrap.userScriptSource);`；字段=bridgeSource/userScriptName/userScriptSource；缺对象抛 \"Missing AlgorithmAidePro Frida bootstrap data\"\n- **脚本送达=宿主 DB+IPC（非 assets 预打包、非远程下载）**：脚本存宿主侧（algorithmAidePro.db / FridaScriptData / app_importScript(包名,脚本名,源码)、app_setScriptAlias、scriptList、app_getScript(包名,脚本名)→源码字符串，IAlgorithmService 接口证据）→ 目标进程 agent 经 AlgorithmClient.app_getScript 拉源码 → NativeHook.loadScript(name, source) → runtime 求值。按 (包名,脚本名) 维度管理，脚本源文本经 Binder 字符串传输。\n- **日志/数据回传=pipe over Binder**：目标进程 agent → 宿主 :algorithm_ipc 的 LogManagerService（Lm3/g = ILogManager$Stub）`openFridaWritePipe(pkg,process)->ParcelFileDescriptor`（宿主建 pipe、把写端给 agent，含 uid 校验 \"Rejected Frida writer: uid=...,package=...\"）；agent `setFridaLogPipe(fd)`；宿主读线程 Lm3/c.run()（DataInputStream，\"Frida pipe failed: package=, process=\" / \"Frida pipe closed: package=\"）→ FridaLogFrameCodec → FridaLogData → 按包名 db（DatabaseContext/Lm3/g.f）→ UI；另有 openWritePipe（普通日志）、executeCommand/executeQuery/exportLogs（\"Operation requires pipe:\"/\"fridaStats\"）\n- **热更新**：宿主改脚本 → ConfigAction 广播（Lx2/b \"Frida script reload broadcast received: \"）→ 目标进程 ConfigReader.updateFromBroadcast（实现 SharedPreferences，xposedsharedprefs=true）→ 重新拉脚本/重载\n\n## 4. UI 关联 / 错误反馈（对照 LSPFRIFA 方式）\n- **Frida 相关界面**：FridaEditActivity（脚本编辑）、HookListActivity、AddDynamicClass、DexViewActivity、LogListViewActivity/LogReadActivity（日志列表/详情）、LogManagerClient、FridaLog bean、AppSettingActivity、RookieActivity、SpecialThanksActivity\n- **状态/错误反馈与 LSPFRIFA 同构**（assets/help.zh.html 官方 FAQ）：①模块未激活（红）——无 Xposed 环境/未勾选/未重启/框架不可识别(应用转生)/虚拟框架未适配；②系统服务未启动（橙）——未勾选作用域\"系统框架\"/虚拟框架未适配；③系统服务版本错误（橙）——更新后重启即可；④日志列表为空——作用域未选 App/功能无日志/目标 App 存在对抗(hook 检测)/模块未生效。即宿主 UI 以\"模块状态+系统服务(IPC)状态+日志列表\"三段式反馈，与 LSPFRIFA 一致。\n- **远程内容**：assets/webui/index.html 加载 https://junge666.cn/algorithmAidePro/webui/assets/index.js（**远程下载的是 Web UI 资源**，不是 frida 脚本）；还有 McpServerService（把 App 能力暴露为 MCP 服务，配合 AI 助手）+ ReqableStack bean / com.reqable.android 默认作用域（Reqable 集成）。\n\n## 未确认项（无证据，未编造）\n1. handleLoadPackage 具体 hook 的类/方法名（字符串加密，运行期解密）\n2. NativeHook.init(String) 参数具体内容（推测为配置/脚本标识，未逐指令验证）\n3. 定制运行时上游变体（gadget fork 或 core-agent fork；仅凭构建路径与零 gadget 标识判定\"非标准 gadget\"，具体变体未确认）\n4. 宿主主进程是否也加载运行时（未见证据，Lg3/e 仅从 Xposed 路径引用）\n5. 脚本源码链路（app_getScript）与 loadScript 的直接调用点未逐指令回溯（接口存在性已证实）"
+    },
+    {
+      "id": "t2",
+      "subject": "整合算法助手 Frida 注入拆解最终报告",
+      "description": "等 frida-researcher 的 t1（注入逻辑拆解报告）完成后，整合成最终交付《算法助手Pro Frida 注入逻辑拆解报告》：\n1. 结构：依赖形态结论（gadget/自实现/外部工具 + 证据）→ 注入链路（入口→loadLibrary→配置→脚本送达→目标进程）→ 与 LSPFRIFA 对比表（GumJsBridge 自研注入 vs 其方案：机制差异/优缺点）→ 可借鉴点（口径：不照搬，学组织/能力/反馈模式）\n2. 冲突/未确认项标注（frida-researcher 报告 vs .so/字符串证据）\n3. 与 LSPFRIFA 的落地映射：我们现有 GumJS 注入（TargetIpcServer+GumJsBridge+UI）有什么可改进启发的点（如 gadget 配置模式/脚本管理/日志反馈）\n完成后直接提交 t2 结果（全文报告），我转交用户。",
+      "status": "completed",
+      "assignee": "inject-integrator",
+      "dependencies": [],
+      "attempt": 2,
+      "createdAt": 1787554166263,
+      "updatedAt": 1787555478260,
+      "attemptId": "7c71262d-85e4-4c93-9001-c5ecdb025bb8",
+      "reassigning": false,
+      "output": "《算法助手Pro Frida 注入逻辑拆解报告》最终整合已完成，全文落盘：/storage/emulated/0/AndroidIDEProjects/LSPFRIFA/docs/AlgorithmAssistant-Frida-Injection-Final-Report.md（181 行）。\n\n【核心结论】\n1. 依赖形态=自实现注入（确认）：Xposed 模块载体（assets/xposed_init→hook.XpInit，de.robv 旧 API min54，scope=android+com.reqable.android）+ 目标进程内静态嵌入官方 frida 构建树定制的 GumJS/QuickJS agent runtime（libalgorithmAidePro.so 6.1MB：entrypoint-quickjs.js/core.js/message-dispatcher.js/worker.js//frida/bridges/java.js/frida:rpc + GumQuickJS* 类名）。排除 frida-gadget 静态注入（无 gadget .so/无 .frida section/0 字符串命中）与 frida-server 外部（无二进制）。另发现内嵌 Dobby inline-hook 框架 + 导出 hookNetwork/hookSignal。\n2. 注入链路：XpInit.handleLoadPackage→hookAllMethods→XpInit.a(ctx)→Ll3/h newInstance→NativeHook.b(ConfigReader)→LibraryLoader（Lg3/e）：从不经 System.loadLibrary——经宿主 :algorithm_ipc Binder service_getLibrary→ParcelFileDescriptor 流式取 so→<ctx>/lib/<UUID>→System.load→删临时文件。配置=无文件，native 注入 globalThis.__algorithmAideBootstrap{bridgeSource,userScriptName,userScriptSource}，bootstrap 顺序 installFrida17Compatibility→installLazyJavaBridge→Script.evaluate。脚本配送=(包名,脚本名)维度 app_getScript Binder 字符串；日志回程=openFridaWritePipe→PFD→setFridaLogPipe→pipe 帧协议(FridaLogFrameCodec)→按包名 db；热更新=ConfigAction 广播→ConfigReader.updateFromBroadcast。\n3. 对比：与 LSPFRIFA（libxposed102+GumJsBridge+TargetIpcServer+Miuix UI）机制同为\"Xposed+GumJS\"，但算法助手多出 Java bridge/rpc 全能力（LSPFRIFA 仅 gum 层）、pipe 帧协议日志（LSPFRIFA 为 Binder 逐行）、.so 流式热更、多脚本库、4 级排障反馈；LSPFRIFA 优势=libxposed102 现代 API、零重启热加载（gum_script_load_sync）、无混淆可维护性。\n4. 冲突/未确认：t1 与 integrator 独立验证零冲突；t1 遗漏 4 处已补（Dobby 内嵌、agent runtime 全套、Java bridge 运行时装填模式、RegisterNatives 注册表类名）。8 项未确认列明（hook 类名加密、init(String) 语义、fork 分支、hookNetwork 用途等）。\n5. 落地映射（保持 GumJS 不换引擎）：P0=①Java bridge 运行时装配（bootstrap 模式）②日志 pipe 帧协议+持久化+uid 鉴权 ③多脚本组织（ScriptStore 升级+Provider 方法族+UI 脚本列表）④排障 4 级状态机；P1=⑤.so 流式下发引擎热更（保留 gum_script_load_sync 零重启优势）⑥独立 :ipc 进程；P2=⑦MCP 服务面 ⑧虚拟框架兼容（可选）；明确不学=多语言引擎/换 GumJS/字符串混淆/回退旧 API。"
+    }
+  ],
+  "taskSeq": 2
+}

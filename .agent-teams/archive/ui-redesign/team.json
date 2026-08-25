@@ -1,0 +1,116 @@
+{
+  "name": "ui-redesign",
+  "id": "ui-redesign",
+  "description": "重新设计 LSPFRIFA UI（视觉/排版/质感）+ 网络调研可用 UI 库（Compose/M3/Monet 生态）并择优引入；基准=参考截图范式 + Material You + 现有 Miuix/M3 栈",
+  "captainSessionId": "session-7f1033d6-1781-424f-9d56-729ee1530c40",
+  "createdAt": 1787620063603,
+  "members": [
+    {
+      "id": "4117bf2c-150a-40dd-83db-1456cd5d154e",
+      "name": "design-researcher",
+      "role": "UI 库调研员",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787620073001,
+      "status": "removed"
+    },
+    {
+      "id": "0f21fed9-f6a1-4253-b495-29ccb5fd318c",
+      "name": "ui-designer",
+      "role": "Miuix/M3 Compose UI 设计师",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787620073704,
+      "status": "removed"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "subject": "调研可用 UI 库（M3 组件/图标/动画/字体/设计规范）",
+      "description": "网络调研：用于 LSPFRIFA 宿主 App（Kotlin + Compose Multiplatform Android 产物 1.12.0-rc01 + 已依赖 Miuix 0.9.4-rc01 + material3 1.12.0-alpha03（Monet）+ miuix-icons）的可用 UI 库/设计资源。目标：**让 UI 更精致**（对标现代 Material You / HyperOS 应用质感）。\n\n【调研范围（用网络搜索，注意 read_page/web_search 桥已坏（modsearch bad ELF），改用 curl（GitHub raw/Maven metadata/POM）与 mcp 搜索代理（search_proxy_tavily_search / serper 等）】\n1. **Compose Multiplatform UI 组件库**（除 Miuix/M3）：搜 \"Kotlin Compose Multiplatform UI component library 2025 2026\"；考察：CMP Material3（已有）、material-kolor（已用）、**compose-ui 设计库**（如 Jetchat 类、**kotlinx-...**）、**风格库**（如 HyperOS 风：**mt40/compose-miuix** 已有）、其它（**precompose/**、**voyager** 导航库、**libres** 资源）——列出可用/不可用理由\n2. **图标/图形**：material-icons-extended（JetBrains CMP 版坐标与版本对齐 1.12.0-rc01？Maven 实查）、**compose icons** 其它、SVG/Raw 资源管线\n3. **动画/交互**：M3 spring/overscroll、compose animations（CMP 1.12 内置）——是否需要额外库\n4. **字体**：HyperOS 风格字体（MiSans 可用性/许可）、Material 字体\n5. **设计系统经验文章**：HyperOS 设计规范要点（圆角/渐变/玻璃拟态 blur——Miuix blur 模块已有可用性评估）、Material You 布局栅格\n6. **工程兼容性**：候选库版本与 CMP 1.12.0-rc01 / Kotlin 2.4.10 / AGP 9.3.1 的对齐（很重要——不能在版本冲突）\n\n【输出】报告（≤1200 字）：\n- 候选库表（库/坐标/版本/许可证/用途/兼容性评估/推荐度）\n- 3-5 个\"立即可用提升质感\"的项（如 M3 组件解禁清单/SegmentedButton FAB 等 + 图标库坐标 + blur 使用）\n- 明确标注哪些不需要（避免无谓依赖）\n完成后 update_task；这份报告是设计依据。",
+      "status": "completed",
+      "assignee": "design-researcher",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787620088088,
+      "updatedAt": 1787620422768,
+      "attemptId": "76c8db77-2aa3-49a1-bbc7-7917c9c0b42b",
+      "reassigning": false,
+      "output": "【UI 库调研报告】数据来源：Maven Central / Google Maven 元数据实查 + POM 依赖实查（2026-08-25 验证）+ tavily 搜索。\n\n★核心结论：现栈已完全自洽。Miuix 0.9.4-rc01 根 POM 实查 = foundation 1.12.0-rc01 / kotlin-stdlib 2.4.10 / material3-window-size-class 1.12.0-alpha03 / com.materialkolor:material-color-utilities 5.0.0 —— 与项目 CMP 1.12.0-rc01 + Kotlin 2.4.10 + material3 1.12.0-alpha03 精确对齐，Miuix 即按该组合编译。新增依赖必须避开旧 CMP/Kotlin 子树。\n\n【候选库表】\n| 库 | 坐标 | 版本(日期) | 许可 | 用途 | 兼容性 | 推荐 |\n|---|---|---|---|---|---|---|\n| Miuix ui/icons/blur/squircle/preference/nav | top.yukonga.miuix.kmp:* | 0.9.4-rc01 (08-13) | Apache-2.0 | HyperOS 组件/图标/模糊/超椭圆 | 完全对齐（见上） | ★★★ 用满 |\n| material-kolor | com.materialkolor:material-kolor | 5.0.0 稳定 (07-11) | Apache-2.0 | Monet 动态取色 | Miuix 依赖同版 color-utilities 5.0.0 | ★★★ 已在用，保持 5.0.0（旧组 com.moriatsushi 已废弃） |\n| CMP material3 | org.jetbrains.compose.material3:material3 | 1.12.0-alpha03 (06-30) | Apache-2.0 | M3 组件 | 对应 androidx material3 1.5.0-alpha22 线（POM lint 依赖实查） | ★★★ 保持 |\n| material-icons-extended | org.jetbrains.compose.material:material-icons-extended | 冻结 1.7.3 (2024-12) | Apache-2.0 | 图标 | CMP 侧 2024-12 起停更；androidx 侧冻结 1.7.8 (2025-02)。会拉 ui 1.7.3 子树（可被 1.12 覆盖但不干净） | ✗ 不用 |\n| Voyager | cafe.adriel.voyager:voyager-navigator | 2.2.21-1.10.3 (06-08) | Apache-2.0 | 导航 | 版本号=Kotlin2.2.21+CMP1.10.3 编码，需上调验证 | ✗ 不需要 |\n| Decompose | com.arkivanov.decompose:decompose | 3.6.0-alpha01 (07-01) | Apache-2.0 | 导航/状态机 | 活跃 | ✗ 过重，不需要 |\n| Precompose | moe.tlaster:precompose | 1.7.0-alpha03（2024-10 停更） | Apache-2.0 | 导航 | 不维护 | ✗ 排除 |\n| Composables One / Compose Unstyled | 无 Maven（zip 分发） | — | — | 通用组件 | 非依赖化、非 Material 体系，与 Miuix 冲突 | ✗ 排除 |\n| compose-cupertino | — | — | — | iOS 风格 | 与需求无关 | ✗ 排除 |\n\n【立即可用提升质感（5 项，均无需新增第三方库）】\n1. miuix-blur 0.9.4-rc01：底栏/顶栏/卡片玻璃拟态 = HyperOS 4 \"Liquid Glass\" 质感核心；避免大区域叠加。\n2. miuix-squircle：RoundedCornerShape→SquircleShape，超椭圆外形正是 HyperOS 品牌语言（logo 即超椭圆点阵），卡片/按钮立竿见影。\n3. miuix-icons 0.9.4-rc01：图标缺口正解，替代冻结的 icons-extended（1.7.3）。\n4. M3 组件解禁（material3 1.12.0-alpha03 内建，无需库）：SegmentedButton（过滤/日志级别）、ExtendedFAB、ModalBottomSheet（脚本详情）、PullToRefreshBox（日志刷新）、AssistChip/FilterChip（三态标签）。M3 Express 组件（Carousel/FloatingToolbar）属 1.4+ 新件，命名以 1.5.0-alpha 线为准（置信度中）。\n5. 动画零新增：spring/动效曲线随 CMP 1.12 内置（animation-core 1.12.0-beta01），非线性+可打断跟手感靠 M3 spring 参数化实现，Miuix 自带过渡。\n\n【字体】目标机=小米（系统字体即 MiSans，可变字重 10 档，v4.003）→ 无需打包。若将来适配非小米机型再打包，须遵守 MiSans 协议：不可修改/再开发、软件内须注明使用 MiSans、许可可撤销（风险点）。\n\n【设计规范要点】HyperOS：超椭圆续用、毛玻璃高斯漫射柔和（澎湃OS 明确优于 MIUI 窄漫射）、非线性可打断动效、圆角参考 widget 规范约 12.67dp(FHD)/14.48dp(2K)。Material You：组件 8dp 栅格/排版 4dp、12 列栅格、窗口尺寸类 Compact/Medium/Expanded；Google I/O 2026 \"Expressive layout\"+ 8dp spacing 系统。深色模式必适配、触控目标 ≥48dp。\n\n【明确不需要】全部导航库（3 页 HorizontalPager+自绘底栏，Pager 即导航；Precompose 已停更）；material-icons-extended（冻结）；额外动画库；MiSans 打包（仅小米机型）；Composables One/Cupertino 等风格外援。\n备注：GitHub API 不可达（403 限流），版本信息以 Maven Central 元数据为准，可信度高。"
+    },
+    {
+      "id": "t2",
+      "subject": "UI 重设计实施：玻璃拟态/超椭圆/排版栅格/M3 局部组件",
+      "description": "LSPFRIFA UI 重设计落地（依据：design-researcher t1 报告 + 参考截图范式 + 用户\"丑\"的三大痛点：底栏/卡片/整体排版）。\n\n【设计规格（实施基准，按此做）】\n1. **玻璃拟态（Miuix blur）**：底部悬浮胶囊导航 + 详情/日志/编辑页 TopAppBar 用 miuix-blur（Liquid Glass）；仅小区域（性能风险：大区域叠加禁）；blur 前确认 API（RuntimeShader API33+ 门槛——Miuix blur 模块 hasBackdrop/API 支持？实核 miuix-blur 用法与 isRuntimeShaderSupported 门槛，低于门槛降级纯色）\n2. **超椭圆（squircle）**：卡片/插件卡/底栏容器用 miuix-squircle（HyperOS 品牌）；圆角规范 ~12-14dp（卡片 12dp、底栏胶囊 22dp 保持）；\n3. **排版栅格**：统一 8dp 间距（Card 内 padding 12-14dp、段落间距 12dp）、层级（大标题 24-26sp、标题 17sp、副标 13sp、说明 12sp），参考截图大标题/留白；\n4. **M3 组件局部启用（零新依赖，material3 1.12 内建）**：仅补真实缺口——详情页/插件视图可用 M3 SegmentedButton（若视觉协调）、FAB（ExtendedFAB 用于详情页主操作\"运行/编辑\"？或保持 Miuix）；**M3 启用前先评估与 Miuix 视觉混合度**（颜色需从 M3 MaterialTheme scheme 映射——我们 MiuixTheme 未提供 M3 MaterialTheme!——**注意**：M3 组件在无 MaterialTheme 时用默认 M3 scheme（灰紫）——要与 Miuix 协调需包一层 MaterialTheme(colorScheme=从 Miuix colorScheme 映射或 dynamicColorScheme)——评估后若成本高则本批不用 M3 组件（保留 Miuix），**如实列入缺口**\n5. **深色**：全部新样式双模验证（日志卡/编辑器主题已有，检查新改动）\n6. **现有功能不动**（Monet/An章拆分/注入链逻辑）——纯视觉层\n\n【交付】：① 设计规格摘要（改了哪些视觉决策+理由）② 实施 diff（文件清单）③ 三查/双清单纪律（新用 Miuix blur/squircle API 必须实核 signatures——~/miuix-src 有 ui-sources.jar；M3 组件签名实核 material3（成员可 curl sources））④ 缺口标注。完成后 update_task。",
+      "status": "completed",
+      "assignee": "ui-designer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787620451178,
+      "updatedAt": 1787622004672,
+      "attemptId": "981003c2-f4b0-489f-b789-f81dd7e921df",
+      "reassigning": false,
+      "output": "【t2 完成】LSPFRIFA UI 重设计落地（纯视觉层，功能零改动）。\n\n★关键实核发现（三查全部走 sources jar / Maven 实测）：\n1. miuix-blur/squircle 是独立 artifact；**Miuix Card 0.9.4-rc01 内部已是 squircleSurface**（Card.kt L177）——卡片超椭圆零改造成本；\n2. miuix-squircle→miuix-shader 已在 classpath（miuix-ui 传递）——**唯一新增依赖 = miuix-blur-android 0.9.4-rc01**（POM 对齐 foundation 1.12.0-rc01 + kotlin 2.4.10）；\n3. blur 门槛实锤：`isRuntimeShaderSupported() = SDK_INT >= 33`；`drawBackdrop` 内部 `enabled && isRuntimeShaderSupported()` **自动降级**，glassSurface 在 API<33 降级不透纯色（=旧实色，无回归）。\n\n【实施内容】\n① 玻璃拟态：底栏 = SquircleShape(22dp) 玻璃胶囊（textureBlur 20dp + 噪声抖动 + surfaceContainer 半透明 0.75/0.70 深/浅），透明全宽条 → 16dp 边距悬浮胶囊；MainActivity 捕获层 `rememberLayerBackdrop+l.layerBackdrop`（不含底栏自身防模糊回环）；详情/日志/编辑页 TopAppBar → GlassTopAppBar（透明 TopAppBar + blur + surface 叠加，状态栏一并玻璃化）。\n② 超椭圆：底栏胶囊/pill 指示器/应用图标（12dp）squircleClip；卡片全部 12dp（原 22/20/18）。\n③ 排版栅格：UiTokens 统一（页内 12、卡间隙 12、卡内 14×12、标题 17sp/副标 13sp/说明 12sp），8dp 级栅格对齐。\n④ M3：**本批未启用**（评估：App 无 MaterialTheme 包装→M3 组件吃默认灰紫 scheme；参考截图分段 tab 意图已被 t6 信息架构替代；详情页入口行与 ExtendedFAB 重复——列入缺口+启用条件，由 captain 拍板）。\n⑤ 深色：全部新增色= Miuix 语义 token，双模成立。\n\n【diff 清单】gradle/libs.versions.toml、app/build.gradle.kts、MainActivity.kt、ui/component/{UiTokens.kt 新增、GlassSurface.kt 新增、MiuixComponents.kt}、ui/screen/{DashboardScreenV093、ProjectScreenV2、ProjectDetailScreenV093、LogScreenV1、ScriptEditorScreenV1、SettingsScreenV093、SelectProjectScreenV2}.kt；报告 docs/UI-Redesign-T2-Report.md。\n\n【风险/缺口】①DSH 无 JDK 未编译验证（签名逐一对照 sources 实锤，需 RV2IDE 编译一次）；②底栏 blur 全屏录制+三页保活，中低端机性能需真机验证（降级路径：blur 半径 token / beyondViewportPageCount）；③静态页 TopAppBar 玻璃为\"轻雾面板\"（内容不滚动穿透，回报失真为零）；④非小米机型图标剪裁行为同旧（仅轮廓曲线不同）。"
+    },
+    {
+      "id": "t3",
+      "subject": "日志页重设计（扫读式列表+紧凑顶栏+自动滚动）",
+      "description": "日志页重设计（用户：太丑，找最优解——参考截图 4/5：干净日志页=紧凑顶栏+返回+标题\"日志\"+内容清晰扫读+空态\"暂无日志文件\"；现代日志查看器范式=时间戳列+消息列两段式/等宽小字/自动滚动到底/悬浮操作）。\n\n【现状】app/src/main/kotlin/com/bail/lspfrifa/ui/screen/LogScreenV1.kt（t6 迁移版：大标题 TopAppBar+metrics 卡+日志卡（prettyMessage 绿字）+清除）——功能（历史回放/实时监听/清除/prettyMessage）保留，改视觉与排版。\n\n【设计规格（最优解，第一性原理：日志阅读=扫读性/信息密度，chrome 让位）】\n1. **顶栏**：紧凑玻璃（GlassTopAppBar 同编辑器页 v2 风格：返回+标题\"日志\"+应用名小字——**与 ScriptEditorScreenV1.kt 顶栏结构保持一致**（参考其 TopAppBar title=projectName+largeTitle=\"\" 用法；无大标题）\n2. **指标精简**：metrics 两卡（脚本/日志数）→ **单行小字指标**（如\"日志 43 条\"）或移除（参考截图无指标）；你裁决但保持简洁\n3. **日志列表扫读化**：LazyColumn 行 = **时间戳列（固定宽、次要色）+ 消息列**（prettyMessage 结果；等宽 12sp；行距紧凑）；行底色交替或无（留白+分隔极淡）；新日志**自动滚动到底**（LaunchedEffect logs.size→listState.animateScrollToItem(max)）——参考与体验最佳；**暂停自动滚动**（用户上滚时暂停——scrollState 手动>0 时暂停，下滚到底恢复）\n4. **操作**：清除（顶栏 action 图标 🗑——MiuixIcons.Delete 实核存在（icons 156 文件实核过）或文本按钮）（长按复制保留 SelectionContainer 现有）\n5. **空态**：居中 Miuix token 色\"暂无日志（运行脚本后可见）\"\n6. **深色**：token 全 Miuix 语义（无硬编码色；现有 0xFF74E391/0xFF171717 绿色/深底替换为 log 着色方案：主 token 色即可——你裁决最小改动（保留浅绿可读性 vs 换 token））\n7. **保持**：功能零改动（历史/实时/清除/prettyMessage/LogStore 交互）——只改视觉层\n【契约】输出 diff+签名（若有新参数）+三查/双清单（新用组件/图标/token 实核；无 onSurfaceVariant/Text=miuix basic.Text 等坑）；不碰其他文件。",
+      "status": "completed",
+      "assignee": "ui-designer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787626898620,
+      "updatedAt": 1787627494217,
+      "attemptId": "504d5130-b50a-4611-80ca-4136b0b442ac",
+      "reassigning": false,
+      "output": "【t3 完成】日志页重设计落地（单文件 LogScreenV1.kt，功能零改动）。\n\n① 紧凑玻璃顶栏：GlassTopAppBar + Miuix **SmallTopAppBar**（stock 紧凑栏，CollapsedHeight 52dp，源码 L173 实核）：返回 + 标题\"日志\" + subtitle=应用名小字 + 右侧清除 Delete 图标 action。\n⚠规格偏差（如实）：task 所述 \"TopAppBar title=projectName+largeTitle=\"\"\" 用法经源码实核**不可行**——SmallTopAppBarLayout 小标题可见性仅由 scrollBehavior 驱动（无 scrollBehavior 时 smallTitleAlpha 恒 0，TopAppBar.kt L652/L668），largeTitle=\"\" 即空栏；故改用 stock SmallTopAppBar（同文件存在，签名全实核）。若你需要 strict 左对齐标题+largeTitle=\"\" 写法，需自绘 Row（可后续改）。\n\n② 指标精简：两卡 metrics（含硬编码假值 \"脚本 1\"）→ 单行小字 \"日志 N 条\"（12sp caption）。\n\n③ 扫读列表：行 = 时间戳列（固定 84dp、次要 #8A8A8A，从 LogStore 前缀 yyyy-MM-dd HH:mm:ss.SSS 解析取 HH:mm:ss.SSS，LogStore.kt L96 实核）+ 消息列（prettyMessage、等宽 12sp、主 #74E391、weight1 换行）；行距 2dp 紧凑；长按复制保留。\n\n④ 自动滚动：pinnedToBottom 跟随态——新日志 animateScrollToItem(末项)；用户拖动开始立即暂停（interactionSource.collectIsDraggedAsState，foundation 1.12.0-rc01 实核无 experimental 注解）；每次滚动停止按位置重定针（底部区恢复/离底暂停）。\n\n⑤ 清除：卡内文本按钮 → 顶栏 Delete 图标（MiuixIcons.Delete 实核存在 icons-sources extended/Delete.kt L15）。\n\n⑥ 空态：居中\"暂无日志（运行脚本后可见）\"。\n\n⑦ 色彩裁决：日志卡保留终端身份 #171717/#74E391/#8A8A8A（散落硬编码集中为常量；task 授权保留浅绿可读性）；页面其余 chrome 全 Miuix token。\n\n【三查】签名逐参数对照（表见 docs/UI-Redesign-T3-LogPage-Report.md）；防坑：全部 miuix basic.Text/IconButton/onSurfaceVariantSummary/无伪 key/正则 matchEntire 组索引核对。\n\n【风险】DSH 无 JDK 未编译（需 RV2IDE 编译一次，重点 SmallTopAppBar 调用与 collectIsDraggedAsState 导入）；自动滚动真机手感待验证（备选 scrollToItem）；subtitle 超长名折行（项目名通常短，低风险）。\n\n【diff】app/src/main/kotlin/com/bail/lspfrifa/ui/screen/LogScreenV1.kt（唯一文件）+ docs/UI-Redesign-T3-LogPage-Report.md。"
+    },
+    {
+      "id": "t4",
+      "subject": "日志阅读器最佳实践外部调研（设计依据）",
+      "description": "外部调研：日志阅读器/开发工具类 App 的日志页最佳实践（为日志页设计提供已验证依据——用户要求\"先调研再定稿\"，参考此前 sora-editor demo 的做法）。\n\n【调研范围（工具：mcp 搜索代理 tavily/serper——read_page/web_search 桥已坏；curl 可用于验证）】\n1. Android 日志查看器 App 的 UI 惯例：Logcat 官方/第三方（如 **Node logs catcher**、**LogcatReader**、**Xlog**、**pidcat**、Marvel/调性类 或 移动端日志阅读器 UI 文章）；关键问题：\n   - 日志行排版标准：时间戳+级别+来源+消息 的字段布局与优先级（哪些字段必显/弱化）\n   - **级别颜色编码惯例**（INFO/DEBUG/WARN/ERROR 的行业色——Material/系统日志惯例）\n   - 交互标配：**暂停/恢复自动滚动（追尾）、搜索过滤、级别过滤、复制/分享、清除、自动滚到底**\n   - 空态文案惯例\n2. 与\"实时日志 vs 历史文件\"两种情境的 UI 差异（我们=目标进程实时流+持久化文件）\n3. 权威来源（Google Material/M3 文档 log 类范式没有直接组件——找设计文章/开源 log viewer 仓库 README/截图描述、常见 app 截图分析（文字描述即可））\n\n【输出】≤800 字设计依据报告：①日志行排版与字段优先级（含我们场景裁剪建议）②级别颜色编码（仅用 Miuix token 等价物——列出建议映射）③交互标配清单（哪些必须/可选）④空态与操作区规范 ⑤与我们现有功能（历史/实时/清除/prettyMessage）的对齐建议。完成后 update_task(t4, completed)。",
+      "status": "completed",
+      "assignee": "design-researcher",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787626992947,
+      "updatedAt": 1787627088294,
+      "attemptId": "945f3f28-5027-4e2d-ae0b-0bd6a2f6bd8a",
+      "reassigning": false,
+      "output": "【t4 日志阅读器最佳实践调研】来源（多源一致）：Android Studio Logcat 官方文档（developer.android.com/studio/debug/logcat）+ adb logcat 官方 + Logcat Reader（开源/Kotlin/MIT/868★）+ MAUI.Sherpa LogcatViewer 设计（issue #23）+ Logdy + IBM Carbon 空态规范 + Mobbin/Eleken 空态文。\n\n① 行排版与字段优先级\n- 官方 threadtime 字段序=日期/时间/PID/TID/TAG/级别/消息；AS 提供 \"Modify Views\" 开关（timestamp/tags/PID/package 可显隐）=移动端裁剪的直接范式；Logcat Reader 提供 compact view 隐藏次要字段。\n- 移动端建议：级别→TAG→消息为主线（级别=扫描锚点置首，TAG=来源次要高亮，消息=主体可折行）；时间戳弱化（小号+onSurfaceVariant+等宽字）；日期/PID/TID 裁剪（我们=目标进程单 PID，恒定无信息量）。时间戳在\"历史模式\"升为必显（跨会话定位）。\n- 多行 payload/堆栈=上一条的续行（MAUI.Sherpa 解析器明示；与并集我们 prettyMessage 一致）→ 缩进对齐+继承该条级别色。\n\n② 级别色（行业标配=AS Logcat 着色，多源一致）→ Miuix token 映射\n| 级别 | 行业色 | Miuix/M3 token |\n| VERBOSE | 默认文本色 | onSurfaceVariant |\n| DEBUG | 蓝 | secondary（徽标底 secondaryContainer）|\n| INFO | 绿 | primary（徽标底 primaryContainer）|\n| WARN | 黄 | tertiary（Monet 下偏暖近似黄；M3 无独立 warning token，属近似，置信度中）|\n| ERROR | 红 | error / errorContainer |\n| FATAL/ASSERT | 品红紫 | error 系+加粗/实底强调（无品红 token，与 ERROR 同族靠强调区分，置信度中）|\n- 形式：着色短字母徽标或 8dp 色点（Logcat Reader 即按 priority 着色）；正文用 onSurface 保证可读。\n\n③ 交互标配\n- 必须：追尾自动滚动+用户上滚即暂停+「回到底部」按钮（scroll lock 范式）；级别过滤（官方语义=向上包含 level:INFO⇒含 WARN/ERROR）；文本搜索（高亮/过滤双模式）；长按复制；清除。\n- 推荐：tag 过滤、分享/导出、状态条（条数+live 圆点）、软换行开关（AS 默认不折行、Soft-Wrap 可开）。\n- 性能范式：批渲染(~100ms)+虚拟化/有界缓存（我们 LogStore 4096 有界已达标）。\n\n④ 空态与操作区（IBM Carbon：解释为什么空+单一 CTA+区分情境）\n- 三态区分：等待连接→「正在等待日志…」+spinner；过滤无结果→「无匹配日志」+「清除筛选」CTA（≠首屏空态）；已清除→中性「日志已清空」。\n- 操作区：顶栏=级别过滤 Chips+搜索框（debounce);底部=清除(带确认)/分享/跟随开关+live 指示。\n\n⑤ 与现有功能对齐\n- 实时/历史：单 LazyColumn 双模式——实时=默认追尾+live 标识；历史=静态列表不追尾+「跳到最新」。Logcat Reader 双屏（device logs/saved logs）同控件已验证可行。\n- 清除：建议=清显示不清文件（历史可恢复、低风险），或明确\"清屏/清文件\"二选一语义。\n- prettyMessage：续行缩进+级别色继承+长按复制全文（保持现状）；软换行后置可选。\n- 空态文案用 Miuix 语气、避免黑话（Carbon：别用用户不懂的术语）。"
+    },
+    {
+      "id": "t5",
+      "subject": "修复编辑器浮层遮挡/日志live徽标位置/指标空态",
+      "description": "修复 3 个真机视觉 bug + 逻辑（用户截图反馈）：\n\n【Bug 1：脚本编辑页顶部红色提示被顶栏挡住/太刺眼】ScriptEditorScreenV1.kt——浮层 Column align(TopCenter) top=56dp 与玻璃顶栏（含状态栏 inset ≈80dp）重叠 → 提示被压。修复：a) top 调至 80dp（顶栏下）；b) Warn（tmError）视觉柔化：背景改 surfaceContainerHigh、文字改 error（不要整片 errorContainer 粉红——刺眼）；c) **逻辑**：MiuixCodeEditor 的 LaunchedEffect 在 init **成功时清 tmError**（`onTmError` 只在失败调；若高亮生效则不应显示红色提示——现状提示出现在高亮成功时=bug，检查：成功路径是否残留旧错误/或初始值；与 MiuixComponents 的 onTmError 调用点配合：成功时不 invoke）。\n\n【Bug 2：日志左上角黑色药丸（Live 标识位置/颜色丑）】LogScreenV1.kt——「● 实时」徽标现位于左上（导航图标旁or指标行左）且背景 primary 显得黑坨。修复：a) **移到顶栏 actions 区**（Delete 图标左侧）或标题右侧——与 chrome 对齐（参考 AS Logcat live 标识位置=顶栏）；b) 颜色：背景 surfaceVariant/secondaryContainer + 小 primary 圆点（不要整块深色背景）；小字 11sp。\n\n【Bug 3：日志页空态时\"日志 0 条\"灰条块仍显示】LogScreenV1.kt——指标行（\"日志 N 条\"）在空态（0 条）时隐藏（仅非空显示）；灰条背景改为透明/纯文字（无色块）。\n\n【约束】只改 ScriptEditorScreenV1.kt / LogScreenV1.kt /（必要时 MiuixComponents.kt onTmError 成功清除）——三查/双清单纪律；修复后 update_task(t5, completed) 输出 diff+证据；不引入新依赖。",
+      "status": "completed",
+      "assignee": "ui-designer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787629361284,
+      "updatedAt": 1787629621876,
+      "attemptId": "4fb0ac29-f1a8-425c-bb36-ada9ffdc5328",
+      "reassigning": false,
+      "output": "【t5 完成】3 个真机视觉 bug 修复（3 文件：ScriptEditorScreenV1.kt / LogScreenV1.kt / MiuixComponents.kt；零新依赖）。\n\n=== Bug 1：编辑器浮层遮挡 + Warn 刺眼 + 高亮成功仍显示红提示 ===\na) 浮层 top：硬编码 56dp（与顶栏重叠）→ `.padding(top = padding.calculateTopPadding())`（= Scaffold 顶栏高度，含状态栏 inset；参考设备 ≈80dp，且自适应不同状态栏——严格\"顶栏下\"）；\nb) Warn 柔化：tokenBg(Warn) `errorContainer`→`surfaceContainerHigh`；文字 `onErrorContainer`→`error`（不再整片粉红刺眼；Info 不变）；\nc) 逻辑（高亮成功仍显示红提示根因修复）：`MiuixCodeEditor.onTmError` 签名 `((String) -> Unit)?` → `((String?) -> Unit)?`（null=成功清除）；LaunchedEffect init **成功路径补 `if (ok) onTmError?.invoke(null)`**——旧错误/残留态在文本高亮生效后即被清除；唯一调用点 ScriptEditorScreenV1（grep 实证）同步兼容（lambda 参数型推断不变）。\n\n=== Bug 2：日志左上\"黑色药丸\"live 标识 ===\n移出指标行，入 **SmallTopAppBar actions 区（Delete 图标左侧）——与 chrome 对齐（AS Logcat 惯例）**；视觉=软底胶囊：`surfaceVariant` 底 + 6dp `primary` 圆点 + 11sp `primary` 小字（无整块深色背景）。\n\n=== Bug 3：空态\"日志 0 条\"灰条 ===\n指标行整块 `if (logs.isNotEmpty())` 包裹——空态（0 条）不渲染；纯文字无色块（原实现即文字，仅出现条件需修正）。\n\n【三查/证据】\n- `padding.calculateTopPadding()`：PaddingValues 标准接口方法（foundation layout）✔\n- surfaceContainerHigh/surfaceVariant/error/primary：Miuix Colors 构造函数实核存在（Colors.kt）✔\n- onTmError 调用点：仅 ScriptEditorScreenV1 L170（grep 全项目实证）；签名变更无其他编译影响 ✔\n- 括号平衡：MiuixComponents 46/46、ScriptEditor 46/46、LogScreen 68/68 ✔\n- 未引新依赖；功能路径（自动保存/运行/历史回放/清除/prettyMessage）零改动。\n\n【风险】未本地编译（无 JDK）——onTmError 型变后唯一调用点已核；浮层 top 视觉请真机确认（参考设备 = 80dp 顶栏下）。完成 update_task。"
+    },
+    {
+      "id": "t6",
+      "subject": "M3 分段控件：插件视图入口分段化（MaterialTheme 映射+实核）",
+      "description": "M3 分段控件落地（用户拍板\"可以\"）——插件视图入口分段化。\n\n【场景】ProjectDetailScreenV093.kt（插件视图）：现有两个 BasicComponent 入口行「脚本编辑」「日志」→ 改为 **M3 SingleChoiceSegmentedButtonRow** 单行分段选择器（两段：脚本编辑 / 日志），点击 navigate（onOpenEditor/onOpenLogs 回调不变）。\n\n【前置硬性】\n1. **先实核 signs**（三查）：curl 拉 `org.jetbrains.compose.material3:material3:1.12.0-alpha03` sources jar（https://repo1.maven.org/maven2/org/jetbrains/compose/material3/material3/1.12.0-alpha03/material3-1.12.0-alpha03-sources.jar，解到 ~/miuix-src/m3-src）→ 核对：`SingleChoiceSegmentedButtonRow` / `SegmentedButton(selected, onClick, shape=SegmentedButtonDefaults.itemShape(index, count)) { Text() }` 真实签名（参数名/顺序/默认值）；记录行号。\n2. **MaterialTheme 包装**（M3 组件需要，否则吃默认灰紫 scheme——用户此前指出的坑）：在分段控件**局部**包 `MaterialTheme(colorScheme = <从 Miuix 映射>)`——映射函数本地实现（primary/onPrimary/secondary/onSecondary/tertiary/onTertiary/background/surface/onSurface/error/onError 等 10+ role 从 MiuixTheme.colorScheme 取；缺失 role 用 surfaceVariant 等近似填充——**注意：MiuixColors 无 onSurfaceVariant/tertiary（此前实核）**，映射时用存在的 token（onSurfaceVariantSummary/tertiaryContainer 等）；如实记录映射表。\n3. **视觉**：分段控件尺寸/形状对齐胶囊风格（itemShape 默认已分段圆角；内边距/字号用 UiTokens）；深色自动（M3 scheme 映射）。\n4. **不破坏**：onOpenEditor/onOpenLogs 回调语义不变；其余 UI 不动；三查/双清单交付（含 M3 签名证据+映射表）；输出 diff；update_task(t6, completed)。",
+      "status": "completed",
+      "assignee": "ui-designer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787629516353,
+      "updatedAt": 1787630024917,
+      "attemptId": "6c2fc1a4-d3ee-4022-9c46-5ce20d57efd9",
+      "reassigning": false,
+      "output": "【t6 完成】M3 分段控件落地：插件视图入口分段化（ProjectDetailScreenV093.kt 单文件，零新依赖）。\n\n【实施】\n1. 「脚本编辑 / 日志」两入口行（BasicComponent×2）→ **SingleChoiceSegmentedButtonRow + SegmentedButton×2**（点击即导航 onOpenEditor/onOpenLogs，t6 契约不变；entryMode 状态记录点击段）。\n2. **MaterialTheme 局部映射**（新增私有 MiuixM3LocalTheme）：Miuix 语义 token → M3 ColorScheme（浅/深双模由 MiuixTheme.colorSchemeMode 决定），SegmentedButton 消费槽位全覆盖（sources 实核 defaultSegmentedButtonColors：activeContainer=secondaryContainer/activeContent=onSecondaryContainer/border=outline/inactiveContainer=transparent/inactiveContent=onSurface）。\n3. 清理：BasicComponent/Edit/Notes import 移除（无其他引用，grep 实证）。\n\n【三查/双清单（material3 1.12.0-alpha03 sources 实核，Maven Central 拉取）】\n- SingleChoiceSegmentedButtonRow(modifier, space = BorderWidth, content: SingleChoiceSegmentedButtonRowScope.() -> Unit)（SegmentedButton.kt L328）✔\n- SingleChoiceSegmentedButtonRowScope.SegmentedButton(selected, onClick, shape: Shape, modifier, enabled, colors, border, interactionSource, icon, label)（L285）✔\n- SegmentedButtonDefaults.itemShape(index: Int, count: Int, baseShape = baseShape): Shape @Composable @ReadOnly（L595）✔\n- SegmentedButtonDefaults.colors() = MaterialTheme.colorScheme.defaultSegmentedButtonColors（L495——必须 MaterialTheme 包装，否则吃 M3 默认灰紫 scheme）✔\n- lightColorScheme/darkColorScheme/MaterialTheme（ColorScheme.kt L873/L975）✔\n- 实核调整（Miuix Colors 无 onSurfaceVariant/tertiary）：M3 onSurfaceVariant←Miuix onSurfaceVariantSummary；M3 tertiary/onTertiary←Miuix tertiaryContainer/onTertiaryContainer；M3 outlineVariant←Miuix dividerLine（本组件实际消费 outline）\n- label 用 M3 Text（读 M3 LocalContentColor，随选中态变色；Miuix Text 读不同 CompositionLocal 不可混用）✔\n- 括号 47/47；功能路径（SwitchPreference 开关/作用域申请/轮询）零改动\n\n【风险】未本地编译（无 JDK）——MaterialTheme 参数名与 M3 版本 API 已逐项对照；请 RV2IDE 编译 + 真机确认浅/深/Monet 三态对比度（secondaryContainer 选中段+outline 边框）。完成。"
+    }
+  ],
+  "taskSeq": 6
+}

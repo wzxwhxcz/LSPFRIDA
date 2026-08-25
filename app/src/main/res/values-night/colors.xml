@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 夜间窗口底层背景（与 Miuix dark surface 近似的深色，避免切换黑帧突兀） -->
+    <color name="window_background">#000000</color>
+</resources>

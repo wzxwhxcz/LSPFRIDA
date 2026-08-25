@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 窗口底层背景（治 Pager 切换/首帧"黑一下"：Compose 帧之间透出的窗口背景）
+         浅色 = 纯白（与 MiuixPageBackground 浅色一致）；深色见 values-night/colors.xml -->
+    <color name="window_background">#FFFFFF</color>
+</resources>

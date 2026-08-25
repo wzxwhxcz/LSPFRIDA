@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+  <style name="Base.AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- 显式窗口背景（夜间=黑，与 Miuix dark surface 一致） -->
+    <item name="android:windowBackground">@color/window_background</item>
+  </style>
+
+  <style name="AppTheme" parent="Base.AppTheme" />
+</resources>

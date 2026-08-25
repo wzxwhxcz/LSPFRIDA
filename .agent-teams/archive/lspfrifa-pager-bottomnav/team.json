@@ -1,0 +1,140 @@
+{
+  "name": "lspfrifa-pager-bottomnav",
+  "id": "lspfrifa-pager-bottomnav",
+  "description": "基于 LSPilot 1.0.9 反编译还原结论，深挖底栏精确绘制数值（dp/色值/动画曲线），并在 LSPFRIFA 项目中实现 HorizontalPager 滑动底栏（切换动画），同时应用 setNavigationBarContrastEnforced(false) 解决三键导航白条；保持用户约束：不引入 miuix-blur、minSdk 26 不变、不整体重写现有自绘底栏视觉。",
+  "captainSessionId": "session-7f1033d6-1781-424f-9d56-729ee1530c40",
+  "createdAt": 1787536833220,
+  "members": [
+    {
+      "id": "84c12416-82a2-47a4-8c74-8baff1edd6d8",
+      "name": "rev-eng",
+      "role": "reverse-engineering researcher",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787536839048,
+      "status": "removed"
+    },
+    {
+      "id": "5abed9b6-6d8a-4cf3-8f77-760b0022b35b",
+      "name": "ui-engineer",
+      "role": "Compose UI engineer",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787536839608,
+      "status": "removed"
+    },
+    {
+      "id": "181b3869-2cdb-4803-babd-2fb4a4de93a4",
+      "name": "reviewer",
+      "role": "code reviewer",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787536839932,
+      "status": "removed"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "subject": "深挖 LSPilot 1.0.9 底栏精确绘制数值",
+      "description": "用 MT MCP 反编译工具（mcp__local__mt_apk_* 系列）深挖已打开的 APK 工作区 workshopId=rp2zaf5m（LSPilot_1.0.9.apk，包 me.yun.lspilot）中的底栏组件精确数值，产出数值表。背景：目标应用 UI 全部在混淆的 R8 类中（无 miuix 库，自研主题 MiuixLSPilotTheme）。已知底栏链：\n- me.yun.lspilot.ui.MainScreen（混淆为 Lk8d，MainActivity.kt:194）：方法 l(Int,Function1,Lw60,Composer,II)=MainScreen；p(...)=MainActivity.kt:226 底栏块；r/s/t/q=各 tab 页\n- 底栏调用 Ledf.g(...)（混淆类 Ledf，方法 g）= androidx.compose.foundation.pager.HorizontalPager (Pager.kt:132)，550 指令\n- Lbsi = 底栏样式 Modifier 链 API（方法 a/b/c/d/e/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z，返回 Lerd=Modifier）；Lya6=形状×3；Lhwl=动画参数×6；Lh48=ImageVector；La95=Dp\n- Lb9d=MainPagerState（方法 e()返回 Lief=PagerState）；Lf8c=图标参数；Lk8c.a(Lerd,Lf8c)=图标→Modifier；La8d=点击处理 lambda；Lil/Lil$c=指示器/文本样式；Lzcf/Lhfi=颜色相关\n- 底栏样式预览图标：Lh94.a(Lp18$c) 返回 ImageVector（名字如 \"Rounded.Dashboard\"，24dp，PathBuilder 绘制，含 Ljxi/Ltjf）\n- 主题设置项 Lfb3：方法 c=“底栏样式”（调 Lh94.a + La95.m），e=“悬浮底栏”(Lpg1)，j=“启用模糊”(Ltz0)，k=“液态玻璃效果”(Lvol)，m=“页面缩放”(Lkok)；Lmdk=配色风格 enum，Lvck=风格a/b，Lzk2=主题模式enum(System/Light/Dark/MonetSystem/MonetLight/MonetDark，值a..f)\n- 主题函数 Llqd.d=MiuixLSPilotTheme(MiuixTheme.kt:23)，Llqd.f(Lzk2,Lpi2,Z,Lmdk,Lvck):Lxck=色板合成(MiuixTheme.kt 内部)，Lmqd.c(xck,null,content)=色板提供；Llqd.b=Theme.<anonymous>(MiuixTheme.kt:64)\n- MainActivity 混淆类 Lme/yun/lspilot/ui/MainActivity（入口，方法 u=主 UI MainActivity.kt:115，onCreate$lambda$0$7$0=enableEdgeToEdge+setNavigationBarContrastEnforced(false)）\n\n要挖的数值：\n1. Ledf.g 的 550 指令：全部参数默认值（分页间距 pageSpacing、contentPadding、flingBehavior、动画开关含义）；其中调用的 Loui（方法 h 有 roundToInt）含义\n2. Lbsi.a/c/e/g/i/j/l/m/o/p/q/r/t/u/w/y 每个方法的具体数值（dp 距、圆角、颜色 J、形状 Lya6a/b/c）\n3. Lhwl 6 个静态字段（动画时长/缓动曲线）\n4. Lh94.a：全部预览样式名（\"Rounded.Dashboard\" 之外还有哪些）+ 每个图标尺寸\n5. Lj11 3 个 tab 的图标（Lur7/Lcwl/Lyii 创建的 ImageVector 名字）\n6. Llqd.f / Lmqd.c / Lxck：默认色板核心色值（surface/background/primary 等）——读取 <clinit> 与常量（字段类型 J=Color Long）\n7. Lmdk/Lvck/Lckfj 枚举值列表（配色风格选项）\n8. Lh94 调用的 Lpi2/Lg9l/Lidj/Ljdj 静态色值\n9. Lzcf/Lhfi 颜色值（ledf.i 里）\n\n方法：用 mt_apk_read_text 读 dex_method:Ledf;->g(...) 全文（550 指令分页读，nextActions 里 mt_apk_continue）、dex_class:Lbsi/Lerd/Lerk 等 outline、关键 <clinit> 读字段常量；Long 常量 J 直接读 hex（0x...J）。注意：startLine/startColumn 是 member-relative。所有数值标注来源方法名。产出：一份 Markdown 数值表（类别→方法→数值→含义），直接输出在最终结果里。",
+      "status": "completed",
+      "assignee": "rev-eng",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787536862542,
+      "updatedAt": 1787537737698,
+      "attemptId": "f9ecf8c6-03af-4d3d-bb0b-a7995591b6af",
+      "reassigning": false,
+      "output": "LSPilot 1.0.9 底栏精确数值表（MT MCP workspace rp2zaf5m，来源类与方法全部标注）\n\n═══ 0. 架构级结论（与上游简讯的差异修正）═══\n- 底栏链路全貌：MainScreen(k8d.l@MainActivity.kt:194) → rememberPagerState(initialPage=selectedTab, pageCount={3})（Lmef.m）→ Lc9d.a()=MainPagerState(Lb9d) → LaunchedEffect(currentPage→callback)+LaunchedEffect(settledPage→同步) → CompositionLocalProvider(LocalMainPagerState) → Scaffold(Lk8d.k@225) → 竖屏: Lk8d.s@266 = Box(fillMaxWidth){ align(?){ BottomBar(icon0,icon1) } }；横屏: 直接内容 pager(Lk8d.p@226)\n- **有两条底栏实现**（上游简讯未区分）：\n  a) Lm11.c = `ui.component.bottombar.BottomBar`(BottomBar.kt:21) = 外部壳，内部调 Lx11.k = `BottomBarMiuix`(BottomBarMiuix.kt:38) —— 无模糊分支\n  b) S67.I = `ui.component.FloatingBottomBar`(FloatingBottomBar.kt:181) —— 模糊/液态玻璃分支（b 路径，Lh22.l=backdrop 模糊/玻璃链）\n- **修正**：Lya6(Lbsi.a/b/c) 不是\"形状\"，是 fillMaxWidth(1f)/fillMaxHeight(1f)/fillMaxSize(1f) 包装（Lya6$a 字符串实测 \"fillMaxWidth/Height/Size\"，fraction=1.0f）；Lhwl(Lbsi.d..i ×6) 不是\"动画参数\"，是 wrapContentWidth×2/Height×2/Size×2（Lhwl$a 字符串实测 \"wrapContentWidth/Height/Size\"，按 Lil$b=Horizontal / Lil$c=Vertical / Lil=Alignment 配对齐）。Lbsi 是 Modifier DSL helper 类。\n- Lzcf 不是颜色：是 lambda(Z,Lief,Lo24)→Ledf.f（pager 循环/方向连接）；Lhfi 是其内部 builder。Ledf.i = 生成 pager 的 Modifier 扩展链（Lzcf + Lhfi.d + Lerd.g）。\n\n═══ 1. HorizontalPager（Ledf.g = Pager.kt:132, 550 指令，默认参数全部定位）═══\n方法签名即参数序：g(state:Lief, modifier:Lerd, contentPadding:Lsbf, pageSize:Lzbf, beyondViewportPageCount:I, pageSpacing:F, verticalAlignment:Lil$c, flingBehavior:Livj, userScrollEnabled:Z, reverseLayout:Z, key:Function1, pageNestedScrollConnection:Lkqe, snapPosition:Loui, pageContent:Function4)\n- 默认值（smali 内联，.line 4~12）：\n  contentPadding = PaddingValues(0.dp)（La95.m(0f)+Lpbf.e）；pageSize = Lzbf$a.a = **PageSize.Fill**；pageSpacing = 0.dp；verticalAlignment = Lil$a.i() = Alignment.Top；flingBehavior = Lwcf.b(...) = PagerDefaults.flingBehavior(state)；userScrollEnabled=true；reverseLayout=false；key=null；pageNestedScrollConnection=Lwcf.d=默认；snapPosition=Loui$a.a=SnapPosition.Start\n- Lzbf=PageSize（方法 a(Lan4;II)I=calculateMainAxisPageSize）；Loui=SnapPosition（a(IIIIII)I=position；Loui.h=Start.position 实现，含 roundToInt，即\"pageSize+pageSpacing 取整起点=0\"）\n- **调用点实参（k8d.p@226 底栏块）**：state=Lb9d.e()（MainPagerState 持有），modifier=Lk8c.a(iconParameters)→Modifier，beyondViewportPageCount=**3**，pageSpacing=**0.dp**，userScrollEnabled=true，reverseLayout=false，其余全走默认；pageContent=La8d→k8d.q@234（按 index 分派页面内容）\n- Lb9d(MainPagerState) 关键：e()=PagerState；d(I)=**animateScrollToPage**（56 指令，Job 取消+协程）；f()=当前页；X()=pageCount；z()=settledPage；b/c/x=组合器；j()=reset；持 Lo24 scope + Lx5e 状态\n\n═══ 2. 底栏尺寸/布局数值（全部实测）═══\n- **Item 宽度 = 76.dp**（X11.h@BottomBarMiuix.kt:85：La95.m(76f)+Lbsi.b→a(Modifier,76f,0f)→Lq1l）\n- 每 item：click→Lb9d.d(index)（animateScrollToPage，点击即飞过去）；item 内容 Lu11→X11.r@92\n- 单 item 视觉（X11.r@BottomBarMiuix.kt:92）：图标+标签= Lm18.d(icon, label, labelColor=**colorScheme.B()**)；若 showLabel：另加 Text(label, fontSize=**Leak$a.e()**, color=**Leck.g(11)=Color(0xB)**, 样式 mask 0x387ea/v24=0x6db0) —— 硬编码深色文本、fontSize 从主题字体表取（e()）\n- **悬浮胶囊（FloatingBottomBar.kt:181，旋转支路）**：padding=**4.dp**（Lpbf.o/v42=4f）；size=**64.dp × 56.dp**（Lbsi.i(64dp)+Lbsi.t(px) 语义见下）；底部偏移= **12.dp + 导航栏 inset**（X11.k: 12f+Lsbf.a()）；可选 shadow：Leki(10.dp?? F=10f, J=主题强调色, alpha=0.2f/0.1f(软栏开关), …) → Llki.a(modifier, pki, Leki) + Lh22.l(blur 链)\n- **玻璃高光（液态玻璃）**：highlightColor = colorScheme.W()，液态玻璃时 alpha=**0.4f**（Lpi2.l(J,0.4f)）；旋转支路背景 alpha=**0.15f**（Lpi2.l(containerColor,0.15f)+Lcj0.c background），非璃版本 0.15 缺省同源\n- 容器色：containerColor(bar)=**colorScheme.L()**（原生分支直接 Lcj0.c）；icon 填充=**Lpi2.b.a()**（主题 accents 表）\n\n═══ 3. 动画数值（FloatingBottomBar.kt:181 + 关联）═══\n- 旋转动画常量：**-45.0f** 与 **90.0f**（Ler7 两个 remember，经 S67.y0 包裹；用于 graphicsLayer rotationZ 的起点/终点）\n- 重心旋转高亮（即上游\"rememberGravityRotatedHighlight\"同名函数）：Ly84(scope, pageCount-1f, 0f..(pageCount-1), **0.001f**, **1.0f**, **~1.394f**(0x3fb24925) 三个阈值/幅度参数) + Ls67$c 状态 + S67.a/b LaunchedEffect（值变化→animateTo）；S67.o0(Lr5e) 读取当前旋转量，>0 才进入旋转布局\n- 偏移/高光动画态：remember { Lp6g.a(0f)→Lr5e } ×2（FloatState 从 0 起来）；remember { Offset.Zero(Ltu) } + u57(offset, 4dp-px, state) 组合\n- 水波/玻璃覆盖层：O67(Lf8c icon0, Lw4j, Lhi0 icon1, J container, Liw8, J, Function3 items, Lish) —— 液态玻璃时经 Lh22.l 链绘制\n- hover/交互 lambda 记忆：Lp11/Lq11/Lo11/Lr11/X57/Y57/Ly57(颜色)…\n\n═══ 4. 图标 & Tab（Lh94.a / Lj11 / Lgoe）═══\n- 预览样式：**只有 1 个**：`Rounded.Dashboard`（Lh94.a 193 指令，Lp18$c 参数被忽略——方法开头 `if(Lh94.a!=null) return`，构建结果缓存在静态字段）。尺寸=**24×24dp**（width/height/viewport 均 24.0f），填充色=主题（Lpi2.b.a()，经 Lg9l.a()/Lidj.a()/Ljdj.a() 规则参数），PathBuilder 路径全数已提取（4 个圆角方块：moveTo(4,13)/i(11,4)/i(14,21)/i(13,4)/i(4,21)/i(13,4)，curveTo 圆角 0.55/0.45 系数，方块 6×6~7×6 dp 网格）——如需精确路径可发完整 PathBuilder 序列\n- Tab 枚举 Lj11：c=\"Home\"/\"首页\"(Lur7.a)、d=\"Projects\"/\"项目\"(Lcwl.a)、e=\"Setting\"/\"设置\"(Lyii.a) —— 全部传 **Lp18$c.a**（唯一枚举值！）。Lp18$c = 单例 class（仅 1 个静态实例 a），即\"底栏样式\"开关目前只有一个值 —— 与设置页\"底栏样式\"只有 Rounded 一种一致\n- Lgoe = data class NavigationItem(label:String, icon:ImageVector)\n\n═══ 5. 颜色槽（供映射）═══\n- Lez2 = 自研 ColorScheme（60+ J 槽，每 getter 走 Lpi2.v 映射动态值）；底栏实际使用：**B()**（item 图标/标签色）、**L()**（bar 容器色）、**W()**（高亮色，玻璃 alpha 0.4）、**V()**（MainScreen 图标配色来源）；**槽名→语义未定**（需对照 Miuix ColorScheme 参数序，建议 ui-engineer 按 Miuix 0.9.4 ColorScheme 顺序核对；置信度中）\n- Lpi2 = androidx ColorKt（c=Black,d=0xFF444444,e=0xFF888888,f=0xFFCCCCCC,g=White,h=Red,i=Green,j=Blue,k=Yellow,l=Cyan,m=Magenta,n=Unspecified,o=colorspace）\n- Leck = androidx Color 构造器（g(I)=Color(Int)）；Leak$a = 字体大小表（a..e() → I）\n- 文本硬编码色：Color(0xB)/Color(0xE)（Leck.g(11)/g(14)，近黑深色，#0B0B0B 系）\n\n═══ 6. Lbsi（Modifier DSL）逐方法数值 ═══\n- a(Mod,F,F)→Lq1l(F,F)：双浮点（item 用 (76f,0f)）；b=a 的合成默认版；c=fillMaxHeight(F)；d=c 合成版；e=fillMaxSize(F)；f=e 合成版；g=fillMaxWidth(F)；h=g 合成版（调用点传 mask=1 → 1f）；i(Mod,F)→Lasi(0,F,0,F,...,node Lbsi$a)=**offset(Dp)** 类（用在 64dp/56dp）；j(Mod,F,F)/l/m/o/q/r/u 同族 node 修饰符（Lasi 4浮点+bool+lambda，各默认 mask 不同）；p(Mod,J)→Le95 色处理→q；q(Mod,F,F)=Lbsi$f 色/node 修饰符；t(Mod,F)=同 i 的另一个双浮点版（Lbsi$h）；w(Mod,Lil$c,Z)→Lhwl wrapContentHeight；y(Mod,Lil,Z)→wrapContentSize；x/z=合成\n\n═══ 7. 已确认需后补（置信度/耗时）═══\n- Lez2 槽名与默认色板 16 进制值：需读 Llqd.d(154 指令)+Lez2.<init>(373 指令)+Lgz2.f/c；建议后续一轮（约 4-6 次读）\n- q(234) 三页分发语义：Lks7.p/Dp 与 Ladg.B0(Lw60,Dp) 具体实现未深挖（Lks7/Ladg/Luji 均为单浮点构造器，疑似 Spacer/宽度注入），置信度低\n- Lkz2（item 样式对象）默认值未展开；Lh22.l 的完整 blur 参数（Lcc8/Lhqh/shader Ly5e）未展开\n- SideRail（Lm11.d@BottomBar.kt:28, 52 指令）=横屏侧栏，未展开数值"
+    },
+    {
+      "id": "t2",
+      "subject": "读现有 LSPFRIFA 代码并制定 Pager 化实现方案",
+      "description": "工作目录 /storage/emulated/0/AndroidIDEProjects/LSPFRIFA（既有 Android Xposed/Compose 项目，Miuix 0.9.4-rc01，Compose 1.12.0-rc01，minSdk 26）。完成两件事：\n1) 通读以下文件，梳理当前底栏与页面切换实现：\n   - app/src/main/kotlin/com/bail/lspfrifa/MainActivity.kt（AppRoot/NavHost/MainScaffold：bottomBar=FloatingMiuixNavigationBar、内容 when(selectedTab){0→Dashboard,1→ProjectScreenV2,else→Settings}）\n   - app/src/main/kotlin/com/bail/lspfrifa/ui/component/MiuixComponents.kt（FloatingMiuixNavigationBar 自绘：Box(navigationBarsPadding)+Row(SpaceEvenly)+每项 Column(Icon 24dp+Text 11sp)，选中 secondaryContainer/primary，tween 300ms，圆角 22dp）\n   - app/src/main/kotlin/com/bail/lspfrifa/ui/screen/DashboardScreenV093.kt / ProjectScreenV2.kt / SettingsScreenV093.kt（三个 tab 页面入口与 Scaffold 签名）\n2) 制定把页面切换改为 HorizontalPager 的改造方案（不换底栏视觉实现、不引入 miuix-blur、minSdk 保持 26）：页面容器 Scaffold 内容区改 HorizontalPager(state=rememberPagerState(3))，selectedTab 与 pager.currentPage 双向联动（点击底栏→animateScrollToPage；滑动→更新 selectedTab）；MainActivity 补 setNavigationBarContrastEnforced(false)。注意 Miuix/Compose 版本 API（fetch 不到就按现有代码风格写，标注不确定点）。\n产出：改造方案 Markdown（改动文件清单、每处 diff 摘要、风险点、不确定 API 标注），直接输出在最终结果里。",
+      "status": "completed",
+      "assignee": "ui-engineer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787536862703,
+      "updatedAt": 1787537167926,
+      "attemptId": "e281ba7b-b858-4cd6-92d2-2ceb727177f9",
+      "reassigning": false,
+      "output": "已完成 t2：通读 MainActivity/MiuixComponents/三屏源码 + gradle 版本核对，产出 Pager 化改造方案（文档 docs/PagerBottomNavPlan.md，156 行）。\n\n核心结论：\n- 改动集中在 MainActivity.kt 一个文件（约 +35/−8 行），底栏 MiuixComponents.kt 与三个屏幕文件零改动（签名完全兼容）。\n- ① onCreate 在 enableEdgeToEdge 后加 `if (Build.VERSION.SDK_INT >= Q) window.navigationBarContrastEnforced = false`（enableEdgeToEdge 只管颜色不管 contrast scrim，这就是三键导航白条根因；唯一需真机三键导航验证项）。\n- ② MainScaffold 内容区 `when(selectedTab)` → `HorizontalPager(state = rememberPagerState(pageCount = { 3 }), beyondViewportPageCount = 2)`；点击底栏 `scope.launch { pagerState.animateScrollToPage(it) }`；`LaunchedEffect(pagerState) { snapshotFlow { pagerState.currentPage }.collect { selectedTab = it } }` 实现滑动→选中联动；Dashboard onOpenSelector 改 `animateScrollToPage(1)`。\n- 关键取舍：selectedTab 不再由点击直接写（避免动画中 currentPage 经过中间页导致 pill 闪烁），只由 snapshotFlow 驱动；beyondViewportPageCount=2 保活三页（保留各页 LazyColumn 滚动位置/Dialog 状态，行为优于现状）。\n- 版本核对：Compose 实为 org.jetbrains.compose.* 1.12.0-rc01（build.gradle.kts 注释\"1.11.1\"为陈旧注释），rememberPagerState 用 lambda pageCount 形式（置信度：高）；PagerDefaults.flingBehavior 是将来动画曲线还原唯一入口（animateScrollToPage 无 animationSpec 参数）。\n- 不确定点共 7 项均标注置信度（详见文档 §4）：最高风险项为 flingBehavior 签名（中高）与 ROM 是否尊重 contrastEnforced（需真机实测）。"
+    },
+    {
+      "id": "t3",
+      "subject": "实现 LSPFRIFA Pager 滑动底栏改造",
+      "description": "按 t2 方案（若 t2 未定稿则以 t1 数值表 + 本任务描述为准）落地代码修改，工作目录 /storage/emulated/0/AndroidIDEProjects/LSPFRIFA：\n1. MainActivity.kt MainScaffold：内容区 when(selectedTab) 改为 HorizontalPager（3 页：Dashboard/ProjectScreenV2/Settings），rememberPagerState(3)；selectedTab 与 pager.currentPage 双向联动（底栏点击→coroutineScope.launch { pager.animateScrollToPage(i) }；pager 滑动→onPageChange 回调更新 selectedTab）；保留现有 Scaffold 结构、bottomBar=FloatingMiuixNavigationBar 不换视觉\n2. MainActivity：onCreate 里 enableEdgeToEdge 后补 window.setNavigationBarContrastEnforced(false)（照 LSPilot 原版行为，target 明确调用；解决三键导航白条）\n3. 只用现有依赖：androidx.compose.foundation.pager（Compose 1.12.0-rc01 自带）、kotlinx.coroutines；禁止引入 miuix-blur，minSdk 不动（26），不许整体替换底栏自绘实现\n4. 每改一个文件后做自检：import 完整性（grep 用到的符号 vs import 行）、括号配对\n5. 若 t1 数值表已出：把切页动画时长/参数据 t1 微调（如 pager flingBehavior/pageSpacing），没有就先用默认\n产出：改动文件清单 + 每处改动的关键代码片段 + 自检结果（符号-import 核对、括号配对 OK），直接输出在最终结果里。",
+      "status": "completed",
+      "dependencies": [],
+      "attempt": 3,
+      "createdAt": 1787536878211,
+      "updatedAt": 1787537554923,
+      "assignee": "ui-engineer",
+      "reassigning": false,
+      "attemptId": "8b8e1865-04d9-4197-b91c-948028f0c7c6",
+      "output": "t3 第一步完成（Pager 容器改造，静态自检通过），第二步待 t1 数值 + 编译确认后执行。\n\n【第一步已落地】仅改 app/src/main/kotlin/com/bail/lspfrifa/MainActivity.kt（+19 行/净 -3 行左右；214→229 行）：\n1. 新增 import：androidx.compose.foundation.pager.HorizontalPager / rememberPagerState、androidx.compose.runtime.rememberCoroutineScope / snapshotFlow、kotlinx.coroutines.launch（LaunchedEffect 原有）。\n2. MainScaffold：`val pagerState = rememberPagerState(pageCount = { 3 })` + `val scope = rememberCoroutineScope()`；`LaunchedEffect(pagerState) { snapshotFlow { pagerState.currentPage }.collect { selectedTab = it } }` 实现滑动→选中跟随。\n3. bottomBar onClick：`{ index -> scope.launch { pagerState.animateScrollToPage(index) } }`（点击→动画翻页）。\n4. Scaffold 内容区：`Box(when(selectedTab))` → `HorizontalPager(state, fillMaxSize().padding(padding)) { page -> when(page) { 0→Dashboard..., 1→Project..., else→Settings... } }`，三个页面调用参数全部原样保留。\n5. Dashboard 的 onOpenSelector：`{ selectedTab = 1 }` → `{ scope.launch { pagerState.animateScrollToPage(1) } }`。\n\n【静态自检（本 shell 无 JDK/依赖缓存，无法真实 gradle 编译，按 captain 规定门禁执行）】：\n- import-符号核对：rememberPagerState/HorizontalPager/rememberCoroutineScope/snapshotFlow/launch 各 1 条 import、使用均≥2 次 ✓；animateScrollToPage/currentPage 为 PagerState 成员、collect 为 Flow 成员，无需 import ✓。\n- 括号配对：node 去注释/字符串后 () 68/68、{} 39/39 平衡 ✓。\n- API 拼写与作用域：rememberPagerState(pageCount = { 3 }) lambda 形式（CMP 1.12.0-rc01 → foundation ≥1.7，置信度高）；snapshotFlow/animateScrollToPage/scope.launch 均在 MainScaffold 内正确捕获 pagerState/scope ✓。\n- 一致性：MiuixComponents.kt 与三屏文件零改动（期间另一会话 10:20–10:40 动过 Dashboard/Settings/ProjectDetail，逐项核对函数签名全部未变，不影响）；\"selectedTab = it / selectedTab = 1 / when(selectedTab)\" 无残留。\n\n【第二步未执行（按纪律等待）】：\n- 阻塞 1：t1（rev-eng）仍 in_progress，动画/间距数值表未产出。\n- 阻塞 2：编译确认——本 shell 无 java/无 gradle 依赖缓存，真实编译需 AndroidIDE 环境；t4 reviewer 已claimed（编译自检），确认后即执行第二步（flingBehavior/pageSpacing/切页时长 小步微调）。\n- 另：run 纪律第一步\"只改容器\"，故 setNavigationBarContrastEnforced(false)（白条修复，3 行独立改动）未纳入本次，建议 captain 安排在第二步或独立小任务。"
+    },
+    {
+      "id": "t4",
+      "subject": "审查 Pager 底栏实现（一致性+编译自检）",
+      "description": "审查 t3 的实现，工作目录 /storage/emulated/0/AndroidIDEProjects/LSPFRIFA。核对清单：\n1. 代码改动与 t2 方案一致；MainActivity MainScaffold 使用 HorizontalPager + rememberPagerState(3)，selectedTab↔pager 双向联动成立（语义：点底栏→animateScrollToPage；滑动→currentPage 变化→底栏选中态跟随）\n2. 约束遵守：无 miuix-blur 依赖新增、minSdk 仍 26、底栏自绘视觉未被整体替换（FloatingMiuixNavigationBar 仍存在）\n3. setNavigationBarContrastEnforced(false) 已加在 enableEdgeToEdge 之后的 onCreate 中\n4. 编译自检：对改动文件运行 import-符号核对（grep 用到的符号 vs import 行）与括号配对计数；检查 HorizontalPager/rememberPagerState/pagerState(currentPage/animateScrollToPage) API 拼写与作用域（coroutineScope 可用性）\n5. 标记任何会导致编译失败或运行时崩溃的问题（P0），与不推荐但可用的问题（P1）\n产出：审查结论（PASS/FAIL + 问题清单 P0/P1 + 每项证据），直接输出在最终结果里。",
+      "status": "completed",
+      "dependencies": [],
+      "attempt": 10,
+      "createdAt": 1787536879002,
+      "updatedAt": 1787538121872,
+      "assignee": "reviewer",
+      "attemptId": "fd0814c6-03e1-4a66-ae4f-756a481104b2",
+      "reassigning": false,
+      "output": "【t4 静态终审】结论：PASS（静态验证；未运行真实 Gradle 编译，真实编译由用户在 AndroidIDE 执行）。范围：MainActivity.kt 235 行快照（t3 第一步 Pager 容器 + t5 contrastEnforced）。P0：无。P1：3 项（详见正文）。\n\n一、t3 第一步一致性（对照 t2 方案）\n✅ HorizontalPager + rememberPagerState(pageCount={3})（L179/201）；✅ 双向联动：底栏点击→scope.launch{pagerState.animateScrollToPage(index)}（L197），滑动→LaunchedEffect(pagerState){snapshotFlow{currentPage}.collect{selectedTab=it}}（L184-188）——只由 pager 回写，无点击直写，符合方案§2.3.1 防闪烁设计；✅ Dashboard onOpenSelector→animateScrollToPage(1)（L215）；✅ Scaffold 结构/bottomBar=FloatingMiuixNavigationBar 未换（L192-199；MiuixComponents.kt:45 组件仍在）；✅ when(page){0/1/else} 三页映射不变。\n出入点（记录为 t6 决策项，非 P0）：beyondViewportPageCount 未加（方案§2.2 建议 2，实际默认 0）——离屏页销毁、切 tab 丢滚动/Dialog 状态，与改造前 when() 行为一致（非退化）。\n\n二、t5 白条修复\n✅ enableEdgeToEdge（L56-66）之后、super.onCreate（L72）之前（L67-71）；✅ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { window.navigationBarContrastEnforced = false }；✅ import android.os.Build（L3）。\n关键实证（androidx.activity 1.13.0 源码 EdgeToEdge.kt:319）：enableEdgeToEdge 在 API≥29 内部设 isNavigationBarContrastEnforced=(nightMode==MODE_NIGHT_AUTO)，SystemBarStyle.auto() 恒为 AUTO→调用后为 true；其后显式 false 有效（顺序正确）。\n\n三、API 存在性（同版本工件源码；本地 gradle 缓存因 SELinux 隔离不可达，改用 Maven Central/Google Maven 同坐标源码验证；副本在 .plugin-tmp/apiverify/）\n1. rememberPagerState ✅ foundation 1.12.0-rc01 PagerState.kt:90 (initialPage=0, initialPageOffsetFraction=0f, pageCount: ()->Int)\n2. HorizontalPager ✅ Pager.kt:117（state/modifier/尾随 lambda pageContent；beyondViewportPageCount 默认 PagerDefaults.BeyondViewportPageCount=0@Pager.kt:449；snapPosition 默认 Start）\n3. PagerState.currentPage ✅ PagerState.kt:390 val Int\n4. animateScrollToPage ✅ PagerState.kt:661 suspend fun(page, pageOffsetFraction=0f, animationSpec=spring())——在 scope.launch 内调用正确\n5. PagerDefaults.flingBehavior ✅ Pager.kt:378（默认参数表达式被 HorizontalPager 使用，调用无命名参数依赖）\n6. snapshotFlow ✅ androidx.compose.runtime SnapshotFlow.kt:537（androidx compose runtime 1.12.0-rc01，CMP runtime-android 重定向目标）\n7. rememberCoroutineScope ✅ Effects.kt:758\n8. CoroutineScope.launch ✅ coroutines-core 1.10.2 Builders.common.kt:44\n9. enableEdgeToEdge ✅ activity 1.13.0 EdgeToEdge.kt:79；Window.navigationBarContrastEnforced 平台属性 API29+（EdgeToEdge.kt:319 同用法）→ SDK>=Q 守卫正确\n\n四、符号-import 核对 / 括号\n新增用到的符号（Build/HorizontalPager/rememberPagerState/rememberCoroutineScope/snapshotFlow/launch）均有 import（L3/11/12/19/21/38）；未发现未定义引用；unused import AppsUiState（L28）为改造前遗留（警告级）。括号配对：() 74/74、{} 44/44 平衡。\n\n五、P1 清单\nP1-1【真机验证】config-change（旋转/暗色）后 enableEdgeToEdge 的 config 监听重跑 setup 会把 contrastEnforced 重置回 true→白条可能回归；一次性调用与 LSPilot 原版一致可接受，稳健方案 onConfigurationChanged 重设。\nP1-2【决策项】beyondViewportPageCount 未加（默认 0），t6 处理（见一）。\nP1-3【文档级】t2 方案 §4.3/§2.3.4 需修正：flingBehavior 参数名 decayAnimationSpec/snapPositionalThreshold（非 flingDecay/snapPosition）、HorizontalPager 默认 snapPosition=Start（非 Center）、animateScrollToPage 有 animationSpec 参数（方案称\"无\"）；t6 微调按真实签名写。\n记录：API35+targetSdk35 系统忽略该 flag（本项目 targetSdk34 不受影响）；t6 落地后建议复审。"
+    },
+    {
+      "id": "t5",
+      "subject": "补充 navigationBarContrastEnforced=false 白条修复（3 行）",
+      "description": "独立小任务：在 MainActivity.kt 的 onCreate 中、enableEdgeToEdge 之后追加三行白条修复（按 t2 方案 §首次真机验证项）：\nif (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.navigationBarContrastEnforced = false\n（或按 t2 方案原文写法；确保 import Build 已存在，若需则加 android.os.Build import）\n自检：import-符号核对 + 括号配平 + 确认在 enableEdgeToEdge 调用之后。不改其他任何内容。完成后报告改动行数与自检结果。",
+      "status": "completed",
+      "assignee": "ui-engineer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787537590796,
+      "updatedAt": 1787537655420,
+      "attemptId": "1ccb52e6-68e8-4cfa-ad6a-bf8c7376d22d",
+      "reassigning": false,
+      "output": "t5 完成：MainActivity.kt 追加 navigationBarContrastEnforced=false 白条修复。\n\n改动（2 处，共 +6 行；229→235 行）：\n1. import：`import android.os.Build`（第 3 行，位于 android.os.Bundle 之前）。\n2. onCreate：`enableEdgeToEdge(...)` 之后、`super.onCreate` 之前插入：\n   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { window.navigationBarContrastEnforced = false }（含 2 行说明注释，代码 3 行）。\n\n自检结果（全部通过）：\n- import-符号核对：android.os.Build 已存在且被使用（Build.VERSION.SDK_INT / Build.VERSION_CODES.Q）✓\n- 括号配平：node 去注释/字符串后 () 69/69、{} 40/40 平衡 ✓\n- 位置确认：修复块位于 enableEdgeToEdge 调用之后（第 67 行注释起、70 行赋值）、super.onCreate（第 72 行）之前 ✓\n- 未改其他任何内容；其余 229 行与 t3 第一步状态一致。API 29+ 生效；minSdk 26（26–28 无该属性，由 SDK_INT 守卫处理，行为不变）；API 35 + targetSdk 35 时该 flag 被系统强制忽略——本项目 targetSdk 34，不受影响。真机三键导航验证仍为唯一待验证项。"
+    },
+    {
+      "id": "t6",
+      "subject": "第二步：按 t1 数值微调 Pager 保活与底栏几何",
+      "description": "第二步：按 t1 数值表微调（不换结构、不改颜色方案、不动三步屏）。当前 MainActivity.kt 235 行 = t3 Pager 化 + t5 contrastEnforced。改动范围（小步、每步自检）：\n1. 内容 Pager（MainActivity.kt ~201 HorizontalPager）：加 beyondViewportPageCount=3（t1：目标应用=3，保活全部 3 页，防切换卡顿/状态丢失；用户此前抱怨\"切换很卡\"）+ 确认 pageSpacing 用默认 0（t1=0，默认即为 0，无需显式传）\n2. 底栏几何对齐（MiuixComponents.kt FloatingMiuixNavigationBar/FloatingNavItem 数值按 t1：item 宽 76dp、胶囊 64×56dp、内 padding 4dp、底部偏移 12dp、图标 24dp）——注意：只调尺寸/间距数值，保持现有配色（选中 secondaryContainer/primary、未选 Transparent/onSurface）与圆角 22dp 不变；若 76dp 与 SpaceEvenly 冲突，以 row 均铺 + 每 item 约束 76dp 的互不矛盾为准并说明你选哪种\n3. 不接 flingBehavior（t1：目标应用其余默认）\n自检：import-符号核对 + 括号配平 + 数值变更清单（旧值→新值）。完成后汇报：改动文件+行数+数值表。",
+      "status": "completed",
+      "assignee": "ui-engineer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787537781406,
+      "updatedAt": 1787537971177,
+      "attemptId": "ac39bde3-6e7d-4c72-ab26-d5e0d21a0470",
+      "reassigning": false,
+      "output": "t6 完成（第二步：按 t1 数值表微调 Pager 保活与底栏几何），自检全部通过。\n\n【1. Pager 保活（MainActivity.kt）】HorizontalPager 增加 `beyondViewportPageCount = 3`（t1：目标应用实参=3，三页全保活，防切换卡顿/状态丢失）。pageSpacing 确认默认 0（t1=0.dp），未显式传；flingBehavior 走默认（t1：目标应用=PagerDefaults.flingBehavior 默认），未接。\n\n【2. 底栏几何（MiuixComponents.kt）】数值变更清单（旧→新）：\n| 项 | 旧 | 新 | 来源 |\n|---|---|---|---|\n| item 宽 | 内容自适应（约 60dp） | width(76.dp) | t1 X11.h@BottomBarMiuix.kt:85 |\n| 胶囊尺寸 | 内容自适应（约 60×55） | size(64.dp, 56.dp) | t1 FloatingBottomBar.kt:181 |\n| 胶囊内 padding | horizontal 18 / vertical 7 | 4.dp 四边 | t1 Lpbf.o/v42=4f |\n| 底部偏移 | 无（仅 nav inset） | navigationBarsPadding() 后加 padding(bottom=12.dp) | t1 X11.k: 12f+inset |\n| 图标 | 24dp | 24dp（不变） | t1 Lh94.a 24×24 |\n| 圆角/配色/动画 | 22dp / secondaryContainer·primary·Transparent·onSurface / tween(300) | 全部不变 | 纪律要求 |\n\nSpaceEvenly 与 76dp 关系：选「Row 保持 SpaceEvenly 均铺 + 每 item 固定 width(76.dp)」——3×76=228dp，剩余宽度由 SpaceEvenly 均匀分配（n+1 间隙），两者互不矛盾（SpaceEvenly 不拉伸子项，只在子项间分配剩余空间）；未改行外 padding(vertical 8/horizontal 16)。\n\n实现：FloatingNavItem 外层 Column(width 76) 居中包裹胶囊 Column(size 64×56 → clip 22dp → background → clickable → padding 4dp)，icon+spacer3+text 11sp 内容居中（内容区 56×48，icon 24+3+~15 ≈ 42 高，放得下）。点按区域=胶囊本体（与改前一致）。\n\n【3. 自检】import-符号核对：新增 width import（19 行）✓，size/Arrangement 原已导入 ✓；括号配平：MainActivity () 69/69 {} 40/40、MiuixComponents () 56/56 {} 15/15 均 OK ✓；未改颜色方案/动画参数/圆角；未动三屏。\n\n【文件/行数】MainActivity.kt 235→237 行（+2 注释行）；MiuixComponents.kt 153→165 行（+12：1 import + 1 底部偏移 + 10 重构/注释）。"
+    },
+    {
+      "id": "t7",
+      "subject": "补 onConfigurationChanged 重设（旋转后白条回归修复）",
+      "description": "补 t6 遗漏项：MainActivity（237 行版）追加 onConfigurationChanged 重写，重设 navigationBarContrastEnforced=false。\n- 位置：类体内合适位置（可放在 onPause 附近或 onCreate 后）\n- 内容：override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { window.navigationBarContrastEnforced = false } }\n- import：android.content.res.Configuration（若缺）\n- 原因（写入注释，2 行）：enableEdgeToEdge 注册了 config-change 监听，旋转/暗色切换后会把它内部设置过的 contrastEnforced 重置回 TRUE（白条回归）。此重设保证旋转后也无白条。\n- 自检：grep 行号核对（onConfigurationChanged 在类体内、contrastEnforced 在该方法内）+ import-符号核对 + 括号配平；完成汇报里附上四要素行号顺序（enableEdgeToEdge → contrastEnforced(onCreate) → onConfigurationChanged → contrastEnforced(onConfigurationChanged)）。",
+      "status": "completed",
+      "assignee": "ui-engineer",
+      "dependencies": [],
+      "attempt": 2,
+      "createdAt": 1787538014343,
+      "updatedAt": 1787538310813,
+      "attemptId": "a0f8d519-714c-4ea3-a81b-8f2ad23aea9a",
+      "reassigning": false,
+      "output": "t7 完成（onConfigurationChanged 重设，旋转后白条回归修复）：MainActivity.kt 248 行版。\n\n改动（+11 行，237→248 行）：\n1. 新增 import android.content.res.Configuration（第 3 行）。\n2. onCreate 之后新增 override：onConfigurationChanged(newConfig: Configuration)（第 86 行）→ super.onConfigurationChanged(newConfig)（87）→ if (SDK>=Q) window.navigationBarContrastEnforced = false（第 92 行）。\n  背景：enableEdgeToEdge API29+ 内部按样式重设 isNavigationBarContrastEnforced（可能为 true），旋转/暗色切换的 config-change 监听/回调后可能恢复为 true → 重新关闭防三键导航白条回归。\n\n自检/顺序断言（grep -n + 行首锚定正则实测）：\n- 57 < 71 < 73：enableEdgeToEdge(57) → contrastEnforced=false(t5, 71) → super.onCreate(73) ✓（t5 在 enableEdgeToEdge 之后、super.onCreate 之前）\n- 86 < 92：onConfigurationChanged(86) 内有 contrastEnforced=false(92) ✓\n- import-符号 ✓；括号配平 ✓（() 72/72、{} 42/42）。\n\n事实备注：本工程 manifest 中 MainActivity 未声明 configChanges（旋转/暗色切换默认重建 Activity → onCreate 重跑会重新应用 t5 修复），故此重写为防御性覆盖（覆盖 enableEdgeToEdge 注册监听重置路径与不重建仅回调的 ROM 变体）；若未来给 MainActivity 加 configChanges 声明，该重写变为必需。"
+    }
+  ],
+  "taskSeq": 7
+}

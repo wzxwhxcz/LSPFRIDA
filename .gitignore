@@ -1,0 +1,25 @@
+# --- Android/Gradle 构建产物 ---
+build/
+app/build/
+.gradle/
+.idea/
+captures/
+*.iml
+.cxx/
+local.properties
+
+
+# --- 实核临时材料（DSH 内部，不入库）---
+.tmp-ref/
+
+# --- 日志/环境杂项 ---
+*.log
+.DS_Store
+
+# --- AndroidIDE 缓存/备份（IDE 垃圾，勿入库）---
+.acside/
+.plugin-tmp/
+.backup/
+
+# --- Frida GumJS devkit（大文件，按 README 下载）---
+app/src/main/cpp/frida-gumjs-devkit/

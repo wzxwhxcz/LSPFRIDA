@@ -1,0 +1,36 @@
+{
+  "name": "fix-assemble-hookrouter",
+  "id": "fix-assemble-hookrouter",
+  "description": "修复 :app:assembleDebug 编译错误：HookRouter.kt:96:115 类型不匹配（chain.getArgs() 返回 List 而非 Array），并复查同文件/同链路其它潜在 Kotlin 类型问题",
+  "captainSessionId": "session-7f1033d6-1781-424f-9d56-729ee1530c40",
+  "createdAt": 1787569854877,
+  "members": [
+    {
+      "id": "9d97d808-a348-4a87-b4cf-013108a577c8",
+      "name": "kotlin-engineer",
+      "role": "Kotlin 编译修复工程师",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787569860599,
+      "status": "removed"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "subject": "修复 HookRouter.kt 编译错误（getArgs 返回 List 类型不匹配）",
+      "description": "文件：/storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/xposed/HookRouter.kt\n\n编译错误（用户侧 gradle assembleDebug，AGP 9.3.1/Kotlin 2.x）：\ne: HookRouter.kt:96:115 Argument type mismatch: actual type is '(Mutable)List<Any!>?', but 'Array<Any?>?' was expected.\n\n根因（已确认）：libxposed api 102 的 XposedInterface.Chain.getArgs() 返回 Java List<Any>（Kotlin 平台类型 List<Any!>!），不是 Object[] 数组。当前代码 `val args = try { chain.getArgs() } catch (_: Throwable) { null }` 推断为 List<Any!>?，传入 `argsSummary(args: Array<Any?>?)` 报错。\n\n要求：\n1. 用 read 读取 HookRouter.kt 全文（重点 90-120 行），把 argsSummary 的参数类型从 Array<Any?>? 改为 List<Any?>?（joinToString 对 List 同样可用，无需改函数体；如 body 里用 joinToString 就保持）。\n2. 顺带自检同文件：`chain.executable.name`（Chain.getExecutable() 返回 Executable）是否合法；`hooker.invoke(m).intercept { chain -> ... }`（intercept 接收 Java SAM 接口 Hooker）用法是否一致——若有高置信疑点一并修正并备注。\n3. 不要修改任何其他文件（GumJsBridge.kt / TargetIpcServer.kt / LSPFRIFAModule.kt 已由 captain 验证过，只集中在 HookRouter.kt）。\n4. 完成后用 read 复查修改后文件，输出最终修改 diff 摘要 + 自检结论（是否还有其它 List/Array/类型不匹配疑点）。\n\n注意：DSH 环境无法编译 Kotlin（无 JDK），最终编译由用户侧 AndroidIDE 执行；你只需保证修改正确性。修改前先 read 文件。",
+      "status": "completed",
+      "assignee": "kotlin-engineer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787569879712,
+      "updatedAt": 1787570033601,
+      "attemptId": "e1d03ca8-5524-4297-96e7-e2a7916a78b6",
+      "reassigning": false,
+      "output": "已修复 HookRouter.kt 编译错误并完成全文件自检。\n\n**修改（唯一一处）**：HookRouter.kt:109 — `argsSummary(args: Array<Any?>?)` → `argsSummary(args: List<Any?>?)`。函数体零改动（joinToString 是 Iterable 扩展，List 直接可用）；第 94 行 `val args = try { chain.getArgs() } catch { null }` 的推断类型为 List 平台类型，传参兼容，无需改动。\n\n**权威依据**：从 /storage/emulated/0/Download/libxposed_api_102.0.0-sources.jar 解出 io.github.libxposed.api.XposedInterface.java 逐签名核对：\n1. Chain.getArgs() → `@NonNull List<Object> getArgs()`（第 209 行）——确认返回 List 而非 Object[]，根因属实。\n2. Hooker 是单抽象方法接口 `Object intercept(@NonNull Chain chain) throws Throwable`（第 271-283 行）→ 真正的 Java SAM，`intercept { chain -> ... }` lambda 转换合法；lambda 末行 chain.proceed() 返回 Object 与 SAM 返回类型匹配。\n3. Chain.getExecutable() → `@NonNull Executable getExecutable()`（第 196 行）→ java.lang.reflect.Executable 的 `.name`（getName()）合法。\n4. HookBuilder.intercept() → HookHandle（第 393 行）与 handles 的 ConcurrentHashMap<String, XposedInterface.HookHandle> 匹配。\n\n**自检结论**：无其它 List/Array/类型不匹配疑点。已核实全文件：declaredMethods.filter → List<Method> 遍历 OK；hooker lambda (`{ m -> hook(m) }`，LSPFRIFAModule.kt:108) 形态与构造参数 `(Executable) -> XposedInterface.HookBuilder` 一致；import 全部在用。未改动任何其他文件（临时解压目录 .tmp-lx 已清理）。\n\n置信度：高（基于官方 102.0.0 sources.jar 逐签名核对；DSH 环境无 JDK，最终编译由用户侧 AndroidIDE 执行）。"
+    }
+  ],
+  "taskSeq": 1
+}

@@ -1,0 +1,72 @@
+{
+  "name": "hook-anchor-b",
+  "id": "hook-anchor-b",
+  "description": "解决 LSPFRIFA 在 Android 15 (ART 35) 上「frida-java-bridge 的 Java.use().implementation 装上不触发」问题（frida 上游 issue #334/#3502）。两条并行路：①上游调研——frida 是否有含 A15 修复的 devkit 可升级（17.x 后续/18.x）、frida-java-bridge 更新、官方修复状态与获取路径；②稳定锚点方案——绕开 Java.use().implementation，改用「拿 Java 方法 ArtMethod 入口地址 → GumJS Interceptor.attach(native entry)」的 hook 方案：设计获取地址的手段（frida-java-bridge 是否暴露 handle/address、JNI 反射→ArtMethod→entrypoint 读取）、attach 后的参数/返回值解释（ARM64 x0=this/x1..=args）、最小可验证脚本（覆盖 GlobalApplication.onCreate 触发证明）。约束：不换架构（GumJS devkit 不变前提优先；若调研显示升级 devkit 是最优则给升级路径）；产出=可运行验证方案+风险清单。真实编译/真机验证由用户执行（我们无 JDK/adb）。",
+  "captainSessionId": "session-7f1033d6-1781-424f-9d56-729ee1530c40",
+  "createdAt": 1787561862831,
+  "members": [
+    {
+      "id": "ff6ee092-0be9-476e-96c5-9aab693ff054",
+      "name": "upstream-researcher",
+      "role": "frida upstream researcher",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787561876004,
+      "status": "removed"
+    },
+    {
+      "id": "77cb884d-4884-4ad6-89f9-3592eae9fe3e",
+      "name": "anchor-engineer",
+      "role": "art hook anchor engineer",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787561876499,
+      "status": "removed"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "subject": "调研 frida 上游 A15 hook 修复状态与升级路径",
+      "description": "调研 frida 上游对「Android 15 / ART 35 上 Java hook 失效」的修复状态与可升级路径。背景：LSPFRIFA 用 frida-gumjs-devkit-android-arm64（本地 cpp/frida-gumjs-devkit/arm64-v8a，strings 显示 17.9.3）+ frida-java-bridge 7.0.13（npm）；设备 HyperOS API35；症状 Java.use().implementation 装上不触发；上游 issue frida/frida#334（Hooks on Android 15 Not working, open）、frida/frida#3502（Java bridge error A15, frida 17.2.0）。任务：\n1. frida/frida issue #334、#3502 当前状态（open/closed？）：用 tavily/read_page 查 github issue 页；若 closed，找修复版本（release/commit/对应 frida 版本号）\n2. frida 最新 release（frida.re/news 或 github releases）：17.x 后续/18.x？有无 \"java/ART/Android 15\" 修复条目（changelog 关键词 java bridge/art 15/prevent compile）\n3. frida-gumjs-devkit 最新可用版本与下载地址（github frida/frida releases assets: frida-gumjs-devkit-<ver>-android-arm64.tar.xz）；判断 17.9.3 → 最新 是否包含本问题修复（若上游 issue 仍 open，则结论=暂无可升级版本）\n4. frida-java-bridge npm 最新版本（>7.0.13?）与 17.x 配套要求\n产出：Markdown 调研报告（每条结论带来源 URL/版本号；区分【已确认】/【推断】/【未确认】），直接输出到最终结果。若结论是\"升级路径可用\"，给出确切的 devkit 版本+下载链接+需替换的文件清单。",
+      "status": "completed",
+      "assignee": "upstream-researcher",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787561897261,
+      "updatedAt": 1787562495474,
+      "attemptId": "0705bb19-0679-4097-b0e2-b4555c8615d0",
+      "reassigning": false,
+      "output": "# Frida 上游 A15 Java hook 修复状态与升级路径调研报告\n\n（调研时间 2026-08-24；来源均为直接抓取 GitHub/ecosyste.ms/npm registry/frida.re 官方页面）\n\n## 1. Issue 状态（先纠正任务前提）\n- 【已确认】任务里的 \"frida/frida#334\" 指认有误：frida/frida 仓库的 #334 是无关旧 issue（\"How to call class method...\"）。标题为 \"Hooks on Android 15 Not working\" 的 #334 实际在 **frida/frida-java-bridge 仓库**：https://github.com/frida/frida-java-bridge/issues/334 —— **仍然 OPEN**，创建于 2024-09-02，0 条评论，无修复、无 assignee。→ 上游对该问题没有官方解决。\n- 【已确认】frida/frida#3502 \"TypeError: not a function in Java bridge on Android 15 (Frida 17.2.0)\" → **CLOSED / state_reason=COMPLETED**，关闭于 2025-06-23（https://github.com/frida/frida/issues/3502）。内容：用户在 frida 17.2.0 中把 npm frida-java-bridge@7.0.4 当模块 require 使用报 \"not a function\"。事件时间线：17.2.0=2025-06-18，17.2.1=2025-06-19（\"compiler: On Android, made the backend a shared library to avoid dynamic linking issues due to thread-local storage\"），17.2.13–17.2.15（2025-06 下旬）逐个 \"Bump frida-java-bridge in system-server to pick up an ART offset 修复\"。【推断】其修复在 17.2.1（编译器 TLS/动态链接）或随后的 frida-java-bridge 升级；**精确对应 commit 未确认**。注意：该 issue 是\"bridge 加载报错\"，并非本项目的\"装上不触发\"症状。\n\n## 2. Frida 最新版本（无 18.x）\n- 【已确认】最新 release = **17.17.0**（2026-08-05 发布，https://github.com/frida/frida/releases/tag/17.17.0）。**没有 18.x**。17.9.3 之后有 17.9.4…17.17.0 共 30+ 个版本。\n- 【已确认】对 **frida.re/news 完整 changelog 全文扫描**（17.9.3→17.17.0 全部条目，关键词 android/art/java/zygote/spawn/intercept/hook/quick/deopt/recomp）：**没有任何条目提到 \"Android 15 / ART 35 上 Java hook 装上不触发\"的修复**。唯一相关安卓条目：17.9.10（spawn 匹配）、17.15.2（Android 10 XOM）、17.15.5（USAP patch misses）、17.10.x（Interceptor 选项重构）、17.12.0（CFG 入口气动链）、17.17.0（arm64 分支重定位防御）。\n- 【已确认】17.6.0（2026-01-18）是安卓侧最大改动：frida-core 的 Zygote 处理改为轻量化——直接扫 /proc/$pid/mem 定位 `android.os.Process.setArgV0Native()` 的 ArtMethod，用\"zymbiote\" payload 经 UNIX socket 回连，**移除对 frida-java-bridge 的依赖**（原文：\"frida-core no longer depends on frida-java-bridge... libart.so compatibility issues ... won't compromise Frida's core functionality\"）。**但这只影响 frida-core 的 spawn/子进程门控注入架构，不是 Java hook 触发修复；对 LSPFRIFA（纯 gumjs devkit、无 frida-core）不适用。**\n\n## 3. frida-gumjs-devkit 升级路径\n- 【已确认】最新 devkit 资产已存在且可下载（实测 HTTP 200）：\n  - arm64: https://github.com/frida/frida/releases/download/17.17.0/frida-gumjs-devkit-17.17.0-android-arm64.tar.xz（22,892,656 B）\n  - arm: https://github.com/frida/frida/releases/download/17.17.0/frida-gumjs-devkit-17.17.0-android-arm.tar.xz（21,383,160 B）\n- 【已确认】17.17.0 头文件与 17.9.3 对比：gumjs_bridge.cpp 用到的全部 API（gum_init_embedded / gum_script_backend_obtain_qjs / gum_script_backend_create_sync / gum_script_set_message_handler / gum_script_load_sync / gum_script_unload_sync / gum_script_post 等）签名**完全一致**，仅新增 gum_script_interrupt/terminate。→ 头文件级兼容（【推断】实际编译需实跑，毕竟无 JDK）。\n- 【结论】**\"升级是否包含本问题修复\"：否**。devkit 17.9.3→17.17.0 之间没有本症状（A15 Java hook 不触发）的修复条目；上游 #334 仍 open。**单靠升级 devkit 不能保证修复本问题。**\n\n## 4. frida-java-bridge npm\n- 【已确认】npm 最新 = **7.0.13**（2026-03-17 发布）——**与 LSPFRIFA 已用版本相同，无更高版本可升**。仓库仍活跃：main 分支 2026-06-22 有 2 个未发布提交（android: Fix ART crash on Android 17 arm64；arm: Handle unparseable padding during recompile）。\n- 【已确认】A15/ART35 相关历史修复在 7.0.9–7.0.12 中，全部已被 7.0.13 包含：\n  - 7.0.9（2025-10-11）：Runtime._instrumentation 指针兼容（#371）、Android 16 backtrace 修复（#374）、APEX 版 ART 检测（#373）\n  - **7.0.10（2025-10-24）：\"Handle static trampoline fixups, so we roll back each ArtMethod to its previous entrypoint, to avoid hooks being bypassed\" + \"Synchronize ArtMethod class field post GC\"** —— 与\"hook 被绕过\"最直接相关（frida 17.4.1 changelog 同步记载）\n  - 7.0.11（2026-01-18）：ART 无 copied_methods_offset_ 时支持；7.0.12：JVMTI 不可用时 crash 修复（#381）；7.0.13：getApi() import 修复（#382）\n- 【已确认】本地 bundle（.plugin-tmp/jb/java-bridge.js，JavaBridgeBundle.kt 注明 7.0.13）内含 trampoline/trampolineAllocator/copied_methods_offset 代码 → **确认已包含 7.0.10+ 全部已发布修复**。\n- 【已确认】json 化 bundle 显示其为\"独立桥\"：内含 art::/_ZN3art/NativeFunction/libart/getEnv 符号 → 在纯 GumJS（无 frida-core）环境下经 JNI/NativeFunction 直接操作 ART，无需 frida-core 原生模块。i.e. Java.use 的触发路径完全由 frida-java-bridge JS 决定，devkit 引擎只提供 Interceptor/Memory/Module。\n- 【已确认】2026 年桥仓库仍有对 replacement 机制的活跃 PR：#401（2026-08-03 open，arm64 无锁化 replacement 派发/deadlock 修复）、#394（2026-04-23 open，Android 16 GC hook 安装）、#393（2026-04-20 open，art instrumentation bindings 更新）、#389（closed 2026-04-05，Android 16 fast-path 检测修复）、#376（open，Android 16 动态 Method offset 检测失败）——注意都是 **Android 16/17** 相关问题；**A15 \"装上不触发\" 没有对应开放修复条目**。\n\n## 5. 结论与建议\n- 【已确认/高置信】上游\"可升级修复\"路径**不可用**：frida-java-bridge 已最新（7.0.13）且含全部已发布 A15 修复；devkit 无对应修复条目；#334 仍 open；无 18.x。\n- 【推断/中高置信】LSPFRIFA 的\"装上不触发\"更可能是 ART35/HyperOS 特定场景（如 quickening 覆盖 entrypoint、非 resolved ArtMethod 实例、static trampoline 场景、或桥的 JIT 快速路径检测）——恰是上游还没来得及修的缝隙，也可能是宿主集成时序问题（其 17.6.0/17.7.1 表明 frida-core 花大力气解决的其实是\"桥能挂上 VM\"层面）。**\"稳定锚点方案\"（路线②：直接拿 ArtMethod 入口地址 → Interceptor.attach native entry）仍然是对的兜底。**\n- 【建议（低成本动作）】仍然值得顺手把 devkit 升到 17.17.0：API 兼容、Interceptor 引擎有 7 个月改进（17.10 选项重构/17.12 CFG/17.16 模块卸载钩子清理/17.17 arm64 分支重定位防御——这些对路线②的 Interceptor.attach 稳定性有正面价值）。替换清单：\n  - 用现有脚本即可：`bash app/src/main/cpp/fetch_gumjs_devkit.sh 17.17.0`（脚本默认 16.5.9，传参覆盖）\n  - 覆盖：app/src/main/cpp/frida-gumjs-devkit/arm64-v8a/{frida-gumjs.h, libfrida-gumjs.a, frida-gumjs-example.c}（来自 -android-arm64.tar.xz）与 armeabi-v7a/ 同名文件（来自 -android-arm.tar.xz）\n  - 链接/CMake 无需改动（-lfrida-gumjs 不变）；frida-java-bridge bundle 无需改动（已 7.0.13）\n  - 风险：需真机编译/回归验证（本环境无 JDK/adb）；静态库从 17.9.3→17.17.0 体积/符号变化以实际链接为准。\n\n## 来源\ngithub.com/frida/frida-java-bridge/issues/334 · github.com/frida/frida/issues/3502 · github.com/frida/frida/releases/tag/17.17.0 · frida.re/news（完整 changelog）· github.com/frida/frida/releases/download/17.17.0/frida-gumjs-devkit-17.17.0-android-{arm64,arm}.tar.xz（HEAD 实测 200）· registry.npmjs.org/frida-java-bridge（dist-tags latest=7.0.13）· github.com/frida/frida-java-bridge/commits/main.atom（提交历史）· issues.ecosyste.ms（#334/#3502 状态）"
+    },
+    {
+      "id": "t2",
+      "subject": "稳定锚点方案：ArtMethod 入口地址→Interceptor.attach",
+      "description": "设计并给出「稳定 hook 锚点」最小可运行方案（绕开 Java.use().implementation 的 ART 替换，用 GumJS Interceptor.attach 到 Java 方法 native 入口）。背景：Android 15（ART 35，HyperOS API35）上 frida-java-bridge 7.0.13 的 Java.use().implementation 装上不触发（上游 issue #334/#3502）；我们的 runtime=frida-gumjs devkit 17.9.3（GumJS QuickJS，脚本里 Java/NativeFunction/NativeCallback/Interceptor/Process 全可用；之前测试中 Interceptor.attach 于 getpid native 入口成功触发——native 拦截路径已验证可用）。任务：\n1. 【地址获取】在 frida-java-bridge 7.0.13 环境里拿 Java 方法 ArtMethod 入口地址的手段，评估以下候选并给出最终推荐（可查 frida-java-bridge 源码/社区）：\n   a. `Java.use(Cls).method` 对象是否暴露 address/handle/getMethodId？（读 7.0.13 源码 lib/*.js 确认属性）\n   b. JNI 路线：Java.use(\"java.lang.reflect.Method\") 拿 java.lang.reflect.Method 对象 → 经 JNI NativeFunction（GetMethodID/getDeclaredMethod/callMethod）→ 再读 ArtMethod（ART 内存结构）entry_point_from_quick_compiled_code 偏移（注意：android 30+ 结构无 off 常量,常用偏移见社区 frida tools 如 ObArtMethod/art_method_utils；API35 校验）\n   c. 其他社区技巧（frida 官方 example / hijack 等）\n2. 【attach 方案】拿到入口地址后：Interceptor.attach(entry, {onEnter/onLeave}) 的参数解释（ARM64: x0=this, x1.. 前 4 个参数(不超过 regs)，剩余在栈；onLeave retval=x0）、JNI 方法签名差异(static/instance/构造函数 invokeSpecial?)、构造器 attach 的 this 语义\n3. 【最小验证脚本】给出可直接粘贴到 LSPFRIFA 项目详情页的脚本：hook com.example.application.GlobalApplication.onCreate（或备选 hook `android.app.Application` 的若类名不同——用 resolveClassLoader 场景兜底）+ 触发时打日志（只证明触发即可，无需完整参数转换）；脚本须用我们环境可用 API（17 API：Module.getGlobalExportByName 而非 findExportByName 等）\n4. 【风险清单】ART35 inline hook 兼容性（code patching vs instrumentation）、PIC、CheckJNI、thunk 栈布局、以及\"entry 地址不落在可写页/内联区\"的处理建议；标注哪些需真机验证\n产出：Markdown 方案（含可运行脚本全文+逐步说明+风险），直接输出到最终结果；标注【已确认/推断/需真机验证】。不要修改仓库文件。",
+      "status": "completed",
+      "assignee": "anchor-engineer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787561919256,
+      "updatedAt": 1787562944294,
+      "attemptId": "cb9f9b54-5920-4592-8286-8fd20eeab6d7",
+      "reassigning": false,
+      "output": "【t2 完成】稳定锚点方案产出：ArtMethod 入口→Interceptor.attach（Android 15/ART 35）。\n\n核心结论（源码级证据）：\n1. frida-java-bridge v7.0.13 中 Java.use(Cls).m 无 .address，但有 .handle（=jmethodID）；多 overload 时 .handle 抛错需先 .overload(sig)。\n2. ART 35 (AOSP android15-release jni_id_manager.cc)：jmethodID 偶数时【直接就是 ArtMethod*】（默认 kPointer 模式）；奇数=JniIdManager index 编码（需 DecodeMethodId，libart EXPORT 符号）。\n3. ArtMethod 在 ART 35 从 runtime/mirror/ 迁到 runtime/art_method.h（社区硬编码偏移失效的根因之一）；64 位布局条目：declaring_class 0x00/access_flags 0x04/dex_method_index 0x08/method_index 0x0C/hotness 0x0E/data_ 0x10/entry_point_from_quick_compiled_code_ 0x18。方案不硬编码：内联 frida 桥 _getArtMethodSpec 探测（android.os.Process.getElapsedCpuTime 扫 64B 找 data_/access_flags，quickCode=data_off+8）。\n4. 关键陷阱：entry 落在 libart.so 内 = 共享 thunk（未编译/解释器桥），x0=ArtMethod* 非 this，必须拒绝 attach——frida 桥 isArtQuickEntrypoint 同款判据。\n5. 旁证：v7.0.13 implementation 替换本身走 cloneArtMethod+flags 清理+deopt/instrumentation（ArtMethodMangler），ART35 失效归因【推断·中置信】；本方案零 ART 对象模型依赖。\n\n交付物：\n- 方案全文（含证据标注/风险清单/置信度）：/data/data/com.dsharnessmobile.shell/files/home/tmp-anchor/anchor-art-entry-plan.md\n- 可运行最小验证脚本（MODE A=android.app.Instrumentation.callApplicationOnCreate 必编译链路验证；MODE B=GlobalApplication.onCreate + 自动 thunk 检测 + classloader 兜底；全链路 [anchor] 日志走 console.log+send 双通道）：/data/data/com.dsharnessmobile.shell/files/home/tmp-anchor/anchor-art-entry.js\n- 已确认 LSPFRIFA 加载时机早于 Application.onCreate（LSPFRIFAModule 在 Instrumentation.callApplicationOnCreate intercept before 阶段 loadInitialScript），故 MODE B 时点成立。\n未修改 LSPFRIFA 仓库任何文件。"
+    },
+    {
+      "id": "t3",
+      "subject": "深度研究算法助手的 frida-java-bridge（版本/装配/补丁/diff/机制）",
+      "description": "深度研究「算法助手 Pro 的 frida-java-bridge」（在 t3 提取基础上加深；t3 与 t4 产出合并为一份研究）：目标=搞清算法助手如何让 Java hook 工作（源码级），并为「我们自实现等价机制」提供依据（闭源第三方，不逐字抄——原创实现导向，版权合规）。工作区：算法助手 APK（s45zrswn 复用或重开）。范围：\n1. 【bridge 身份】从 lib/arm64-v8a/libalgorithmAidePro.so 提取内嵌 /frida/bridges/java.js（或等效）的字节：长度/哈希；与官方 frida-java-bridge 7.0.13（npm tarball，本机 ~/jb-build/node_modules/frida-java-bridge/ 或重新解压）做 diff/对比：同版本？含定制改动？若改动,列出改动点\n2. 【patchJavaBridge / installFrida17Compatibility 全文】提取并翻译其机制（它们改写 bridge 的哪些函数/属性/对象;是桥内插桩还是全局注入;是否改变 Java.use().implementation 的路径(如改走 native 入口/自实现 interceptor)——与「implementation 装上不触发」的相关性\n3. 【装配时序】bootstrap 何时/如何加载 bridge（懒加载 on-demand vs 立即;globalThis.Java 何时定义;与用户脚本执行顺序）;runtime 启动时是否有其他 Java 相关 preload（Dobby? hookNetwork?）\n4. 【结论】(a) 算法助手 Java hook 可用的关键机制点【已确认/推断】(b) 与我们的 bundle 差异总结(表格)(c) 可移植性:哪些机制可用我们的 devkit+7.0.13 等价实现【自实现方案要点】(d) 需真机验证项\n产出：研究报告(代码原文引用+机制+对比表+自实现建议),直接提交 t4 结果;不改仓库。",
+      "status": "pending",
+      "dependencies": [],
+      "attempt": 2,
+      "createdAt": 1787568027641,
+      "updatedAt": 1787568256624,
+      "reassigning": false,
+      "handoffId": "9b603df4-e42a-4677-a862-dbc75ccb2d6a"
+    }
+  ],
+  "taskSeq": 3
+}

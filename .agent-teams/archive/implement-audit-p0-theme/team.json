@@ -1,0 +1,88 @@
+{
+  "name": "implement-audit-p0-theme",
+  "id": "implement-audit-p0-theme",
+  "description": "实施审计 P0 三项（F1 Provider 鉴权/F2+F3 主线程剥离/F4 gum_script_load_sync 校验）+ 设置页主题切换（ThemeModeStore+跟随系统/浅色/深色）",
+  "captainSessionId": "session-7f1033d6-1781-424f-9d56-729ee1530c40",
+  "createdAt": 1787572241074,
+  "members": [
+    {
+      "id": "2e71bc94-4ace-4386-aed6-d46c1864db52",
+      "name": "core-engineer",
+      "role": "核心逻辑/安全/JNI 工程师",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787572248268,
+      "status": "removed"
+    },
+    {
+      "id": "ea82a0b0-baaa-4ed1-9691-e86fbdd23e2e",
+      "name": "ui-engineer",
+      "role": "Miuix Compose UI 工程师",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash-vision-exp",
+      "reasoningEffort": "max",
+      "joinedAt": 1787572248897,
+      "status": "removed"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "subject": "F1：ScriptConfigProvider 鉴权三件套（caller-arg uid 匹配+描述符校验+宿主方法限 uid）",
+      "description": "文件：/storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/provider/ScriptConfigProvider.kt（先 read 全文，枚举所有 call 方法名与用途）\n\n背景：本模块宿主 App 的 ContentProvider 被 ① 宿主 UI（enable/disable/save 脚本）② 任意目标 App 进程（is_target_enabled/register_ipc/get_script）跨进程调用。当前 exported=true 无鉴权。**禁止**把 exported 改为 false 或加签名权限——目标进程是任意第三方 App（uid 不同），那样会断掉注入链。\n\n修复方案（三件套，全部在 call() 内实现）：\n1. 宿主专属方法（enable_target/disable_target/save_script 等——以你读到的实际方法清单为准）：`Binder.getCallingUid() != Process.myUid()` 时 `throw SecurityException(\"ui only\")`。\n2. 目标侧方法（is_target_enabled/register_ipc/get_script）：caller-arg 匹配——`arg` 为包名，`context.packageManager.getPackageUid(arg, 0)` 解析出的 uid 必须等于 `Binder.getCallingUid()`，否则拒绝（SecurityException 或返回空 Bundle）；getPackageUid 抛 NameNotFoundException / caller 为 root/system（uid<10000? 直接用 getPackageUid 即可）→ 拒绝。\n3. register_ipc 额外：extras 取出的 binder 必须 `getInterfaceDescriptor() == \"com.bail.lspfrifa.ipc.IScriptExecutor\"`（以实际 AIDL 接口完整名称为准），否则拒绝。\n\n注意：Binder.getCallingUid() 在 call() 执行时有效；不要在主线程外使用。所有改动只在本文件内（若需要 import android.os.Binder/Process 等）。改动后自查：目标 App 冷启动注入链（is_target_enabled→register_ipc→get_script）枚举覆盖不被误拒；宿主 UI 操作（enable/disable/save）不误拒。输出：修改后完整 diff 摘要 + 每个方法归属分类（宿主专属/目标侧）+ 自检结论。改动仅此文件，其他文件一律不动。",
+      "status": "completed",
+      "assignee": "core-engineer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787572266726,
+      "updatedAt": 1787572799698,
+      "attemptId": "867ae141-1e38-4989-85dc-4c64678441bc",
+      "reassigning": false,
+      "output": "F1 已实现：ScriptConfigProvider.call() 鉴权三件套，仅改本文件。\n\n【方法归属分类（7 个，已按实际调用方核实）】\n- 宿主专属（4）：save_script / remove_script / enable_target / disable_target —— 加 `Binder.getCallingUid() != Process.myUid()` → throw SecurityException(\"host-only method ...\")。\n- 目标侧（3）：is_target_enabled / get_script / register_ipc —— caller-arg 匹配：requirePackageUidMatches(pkg, callingUid)：context.packageManager.getPackageUid(pkg,0) 解析 uid 必须 == Binder.getCallingUid()；NameNotFoundException / context null / uid 不一致（含 root/system 等非 App uid 天然不匹配）→ SecurityException。register_ipc 额外：extras.getBinder(\"ipc_binder\") 的 getInterfaceDescriptor() 必须 == \"com.bail.lspfrifa.ipc.IScriptExecutor\"（已核对 aidl/com/bail/lspfrifa/ipc/IScriptExecutor.aidl 全限定名，TargetIpcServer 即 IScriptExecutor.Stub），不符 → SecurityException，再调 IpcManager.registerTarget。\n\n【关键事实核对（本轮验证）】\n1. 目标侧 3 个方法的唯一调用方是 LSPFRIFAModule.kt（L129/L204/L228，hook 在目标 App 进程内，arg=targetPackage 即调用者自身包名）与 TargetIpcServer.kt 的 reconnectToHostOnce（同样在目标进程内、arg=targetPackage、binder=自己 asBinder()）→ uid 匹配成立，正常链路零误拒。\n2. 宿主 UI 实际不经 Provider：IpcManager/ScriptStore 全 in-process（已 grep 全工程 .call( 仅上述两处）→ save/enable/disable 的宿主专属校验为纵深防御，无既有调用方会被误拒。\n3. 已确认 Manifest 声明 QUERY_ALL_PACKAGES（Android 11+ 包可见性无碍，getPackageUid 可解析任意目标）。\n4. exported=true 保持不变（禁止改 false 的要求遵守）。\n5. Binder.getCallingUid() 仅在 call()（Binder 线程）内使用，未外传。\n\n【自检结论】目标 App 冷启动注入链 is_target_enabled→get_script→register_ipc 三个调用均以自身包名为 arg、uid 一致，放行；非法调用（其他 uid 查询他人槽位/宿主专属方法/伪 Binder/错误描述符）均被 SecurityException 拒绝。已知限制（已在注释/结论说明）：MIUI 分身/多用户下克隆 uid 与原包 uid 不一致会被拒绝（严格\"仅自己槽位\"语义，符合任务意图）。验证方式：DSH 环境无 JDK 无法编译，待 AndroidIDE 编译 + IMPL-HIT 真机回归时顺带验证。\n\n【改动文件】app/src/main/kotlin/com/bail/lspfrifa/provider/ScriptConfigProvider.kt（新增 import：android.os.Binder、android.os.Process、android.content.pm.PackageManager；call() 重写为按方法族鉴权；新增 requirePackageUidMatches() 私有函数与常量 EXECUTOR_DESCRIPTOR/IPC_BINDER_KEY）。其余文件零改动。"
+    },
+    {
+      "id": "t2",
+      "subject": "F2+F3：主线程剥离（目标 init 链后台化 + 宿主 Binder 调用 IO 化）",
+      "description": "两个文件（先分别 read 确认现状再改）：\n\n1. /storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/xposed/LSPFRIFAModule.kt\n   - 目标进程侧：runInitChain（loadLibrary+gum_init+TargetIpcServer+registerBinderToHost+loadInitialScript）现在在 hook(Instrumentation.callApplicationOnCreate) 拦截器里同步执行（目标主线程），会拖慢目标 App 启动。\n   - 修复：onPackageLoaded 的 intercept 中把 onApplicationCreated 的执行移到后台线程：`Thread { onApplicationCreated(targetPackage, app) }.apply{ isDaemon=true; name=\"lspfrifa-init\" }.start()`，然后 chain.proceed()。注意：scheduleDeferredInit/runDeferredCheckLoop 已自建线程，无需改；checkTargetEnabled 的 contentResolver.call 在新线程执行没问题；loadInitialScript 内叫 GumJsBridge.loadScript（已 @Synchronized，可在任意线程）。\n   - 不改流程/策略，只改执行线程。\n\n2. /storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/data/ProjectViewModel.kt 与 /storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/ui/screen/ProjectDetailScreenV093.kt\n   - 宿主侧：setEnabled（IpcManager.enableTarget/disableTarget/stopScript）、pushScript（IpcManager.pushScript/loadScript）、isTargetAlive 的 Binder 同步调用目前在主线程/调用线程。\n   - 修复：这些调用包 `withContext(Dispatchers.IO)`（VM 用 viewModelScope.launch(IO) 或现有 scope；Screen 用已有 rememberCoroutineScope+scope.launch(Dispatchers.IO)，参考本文件已有的 LogStore.clear 用法），Binder 调用后回主线程更新 UI 状态（mutableState 更新留主线程）。保留现有行为语义（如\"未连接也 saveScript\"分支）不变，只换线程。\n\n输出：每个文件的 diff 摘要 + 线程归属说明（哪段现在跑什么线程→改后跑什么线程）+ 自检（无死锁/无主线程 Binder 残留）。只改这三个文件，其他文件不动。",
+      "status": "completed",
+      "assignee": "core-engineer",
+      "dependencies": [],
+      "attempt": 2,
+      "createdAt": 1787572266777,
+      "updatedAt": 1787573064393,
+      "attemptId": "9bdb5221-0d2a-448f-8b14-4ed5e28ee080",
+      "reassigning": false,
+      "output": "F2+F3 完成，仅改 3 个文件。\n\n【1. LSPFRIFAModule.kt（目标进程侧，F2 主线程剥离）】\n- intercept：`onApplicationCreated(targetPackage, app)` 改为 `Thread { onApplicationCreated(...) }.apply{ isDaemon=true; name=\"lspfrifa-init\" }.start()`，随后立即 chain.proceed()——Application.onCreate 不再被初始化链阻塞。\n- 线程归属：改前=目标主线程（拦截器内同步）依次执行 checkTargetEnabled(跨进程 Provider call)、runInitChain(loadLibrary+gum_init+TargetIpcServer+registerBinderToHost(Provider call)+loadInitialScript(Provider call))；改后=全部在守护后台线程执行，与 app.onCreate 并行。\n- ⚠️ 对任务描述的修正：任务称 scheduleDeferredInit/runDeferredCheckLoop\"已自建线程，无需改\"，但原代码 runDeferredCheckLoop 成功后 `mainHandler.post { runInitChain(...) }` 会**回主线程**执行初始化链（主线程 Binder 残留，与 F2 目标矛盾）。已一并改为在延迟检查线程直接 `runInitChain`（GumJsBridge 全 @Synchronized、HookRouter 自带 mainHandler 投递、TargetIpcServer 无主线程依赖，已核实线程安全）；同步删除无用 import Handler/Looper 与 mainHandler 参数。流程/策略（三态判定/重试次数/顺序）零变化。\n\n【2. ProjectViewModel.kt（宿主侧，F3）】\n- setEnabled：`val current=_addedProjects.value` 捕获后 `viewModelScope.launch { withContext(Dispatchers.IO){ enableTarget/disableTarget/stopScript }; persist(更新后列表) }`——StateFlow 更新回主线程（viewModelScope 默认 Main.immediate）。\n- 线程归属：改前=调用方线程（UI 主线程）同步执行 IpcManager（stopScript→远程 unloadScript Binder）；改后=Binder/落盘副作用在 IO，UI 状态在主线程。行为语义（先副作用后状态、enable/disable/stop 顺序）不变。\n\n【3. ProjectDetailScreenV093.kt（宿主侧，F3）】\n- LaunchedEffect 3s 轮询：`connected = withContext(Dispatchers.IO){ IpcManager.isTargetAlive(...) }`——ping Binder 在 IO，状态写回主线程。\n- pushScript：整体 `scope.launch`；isTargetAlive/saveScript/pushScript 三处 Binder 调用 withContext(IO)；connected/logs 更新留在主线程；\"未连接也 saveScript\"分支、成功/失败日志文案全部原样保留。\n- onEnabledChange：`enabled=it` 即时（主线程），side-effects（enable/disable/stopScript）`scope.launch { withContext(IO){...} }`。\n- 保留在主线程的 IpcManager 调用均非 Binder（isTargetEnabled/loadScript=SharedPreferences 读、addLogListener=内存 synchronized 列表），仅换 Binder 相关线程。\n\n【自检】无死锁（IpcManager/ScriptStore 无跨协程锁持有，withContext(IO) 无嵌套 join）；三个文件 grep 确认 Binder 调用（isTargetAlive/pushScript/stopScript 的远程调用）全部在 IO 上下文；状态写（mutableState/StateFlow）全部在主线程；无主线程 Binder 残留（含延迟恢复路径，原 mainHandler.post 已移除）。括号平衡校验通过；无 JDK 未编译，待 AndroidIDE 编译+真机回归。"
+    },
+    {
+      "id": "t3",
+      "subject": "F4：gum_script_load_sync 返回值检查（失败返回 JNI_FALSE+清理）",
+      "description": "文件：/storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/cpp/gumjs_bridge.cpp\n\n问题：Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeLoadScript 里 `gum_script_load_sync(g_script, nullptr)` 返回值（gboolean）被忽略；创建成功但加载失败时仍返回 JNI_TRUE，Kotlin 侧 loaded=true，用户看到\"已加载\"假象。\n\n修复：改为\n    GError *loadError = nullptr;\n    if (!gum_script_load_sync(g_script, &loadError)) {\n        LOGE(\"load script error: %s\", loadError ? loadError->message : \"unknown\");\n        if (loadError) g_error_free(loadError);\n        g_object_unref(g_script);\n        g_script = nullptr;\n        env->ReleaseStringUTFChars(jscript, src);\n        env->ReleaseStringUTFChars(jname, name);\n        return JNI_FALSE;\n    }\n（放在现 gum_script_load_sync 调用处；其余逻辑不动，注意既有 create 失败分支的清理模式保持一致。load 失败后 g_script 已置空，后续 unload 调用安全（g_script 判空）。）\n\n输出：完整修改段 + 自检（失败路径资源释放无泄漏/双重释放；成功路径不变）。仅此一个文件。",
+      "status": "completed",
+      "assignee": "core-engineer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787572283379,
+      "updatedAt": 1787573405147,
+      "attemptId": "1088c321-6b1b-4929-afc7-fccc83530d2c",
+      "reassigning": false,
+      "output": "F4 完成（gumjs_bridge.cpp，仅此一文件），含一处对任务前提的事实修正：\n\n【⚠️ 前提修正——任务描述\"gum_script_load_sync 返回值检查\"在该 devkit 中不存在】\n核对 app/src/main/cpp/frida-gumjs-devkit/arm64-v8a/frida-gumjs.h（Frida 17.9.3）：\n- `GUM_API void gum_script_load_sync (GumScript * self, GCancellable * cancellable)`（L86979）——返回 void，参数是 GCancellable* 而非 GError**；\n- GumScriptInterface vtable 中 load_sync 同为 void；全 API 面枚举（grep 全部 gum_script* GUM_API）无任何\"加载状态/结果\"查询函数，无 GError 变体。\n因此\"检查返回值\"字面上无法实现。加载期失败（顶层 JS 异常/语法运行时错误）在 GumJS 中的对外唯一信号是消息处理器收到的 `{\"type\":\"error\",...}` 消息（上游 tests/gumjs/script.c 的 EXPECT_ERROR_MESSAGE_WITH 模式证实）。按等价信号实现（见下）。\n\n【实现】\n1. 新增 `std::atomic<bool> g_load_error_pending{false}` + 前缀常量 `ERROR_MESSAGE_PREFIX = \"{\\\"type\\\":\\\"error\\\"\"`（引擎紧凑 JSON 固定格式；脚本 send() 的 payload 包裹在 {\"type\":\"send\",...} 内，前缀匹配不会误报）。\n2. on_message：消息以该前缀开头 → g_load_error_pending.store(true)（仍继续正常转发 Kotlin 日志）。\n3. nativeLoadScript：set_message_handler 后、load_sync 前置 false → `gum_script_load_sync(g_script, nullptr)` → 泵主上下文（原逻辑）→ `if (g_load_error_pending.load())`：LOGE + `gum_script_unload_sync` + `g_object_unref` + g_script=nullptr + Release 两个 UTF 字符串 + `return JNI_FALSE`（失败路径资源全部释放，含已创建但未加载成功的脚本对象）。\n4. 追加防御：`gum_script_backend_create_sync` 返回 NULL 且未设 error 时（理论上不应发生）→ LOGE + 释放字符串 + JNI_FALSE，避免后续对 NULL 调 set_message_handler 崩溃。\n5. 成功路径零变化：set_handler → load → pump → LOGI → 释放 → JNI_TRUE。\n\n【自检：资源释放】\n- 三个失败路径（create error / create NULL / load error）均：GError 释放（若设）、jscript/jname 的 GetStringUTFChars 全部 ReleaseStringUTFChars 释放、失败脚本对象 unload_sync+unref+指针置空，无泄漏无悬垂。\n- 线程安全：标记为 std::atomic（默认 seq_cst）；同步 load + 泵队列在同一线程内完成，无并发竞争。\n- 已知局限（已在代码注释说明）：若脚本加载成功但其首个异步 tick 恰在泵窗口内产生引擎异常消息，会误判为加载失败（返回 JNI_FALSE）——概率极低；若检测失效（消息前缀格式未来变化），回落为原行为（JNI_TRUE+错误消息仍经日志上行，不崩溃）。\n- 结构校验：括号/圆括号平衡通过（未配对 2 个 { 来自字符串字面量与注释，非代码）；环境无 C 编译器（无 NDK/gcc/clang），未能编译验证，需 AndroidIDE 编译+真机验证（可构造顶层 throw 脚本对照：应返回 JNI_FALSE 且日志出现 load failed）。"
+    },
+    {
+      "id": "t4",
+      "subject": "设置页主题切换：ThemeModeStore + 跟随系统/浅色/深色三选项",
+      "description": "实现设置页主题切换（跟随系统/浅色/深色），全局即时生效 + 持久化。先 read 以下文件确认现状（关键：MainActivity.kt:90-96 已有 ThemeController(colorSchemeMode = ColorSchemeMode.System) + MiuixTheme(controller)，硬编码 System；MiuixComponents.kt:50-55 的 MiuixPageBackground 已按 MiuixTheme.colorSchemeMode 分支——模式一变即全局生效）：\n\n1. /storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/MainActivity.kt（主题装配段 + setContent 结构）\n2. /storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/ui/screen/SettingsScreenV093.kt（现状只有静态\"主题颜色\"条目）\n3. /storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/ui/component/MiuixComponents.kt（MiuixPageBackground/MiuixTheme 用法，注意不要改动它的分支逻辑）\n\n实现方案（照此实现，不要自创）：\nA. 新建 /storage/emulated/0/AndroidIDEProjects/LSPFRIFA/app/src/main/kotlin/com/bail/lspfrifa/data/ThemeModeStore.kt：\n   - object ThemeModeStore：SharedPreferences(\"lspfrifa_cfg\") 存 key \"theme_mode\"（\"system\"/\"light\"/\"dark\"，默认 \"system\"）\n   - 全局状态：`val mode = MutableStateFlow<ColorSchemeMode>(...)`（用 top.yukonga.miuix.kmp.theme.ColorSchemeMode 枚举值 System/Light/Dark 直接映射）\n   - fun set(mode: ColorSchemeMode) { persist + flow.value = mode }；fun current() 初始化时读\n   - init(context) 由调用方传入（或在 MainActivity 首次访问前 context 可用时惰性初始化——注意 SharedPreferences 需要 Context；MainActivity 里 AppRoot 前调用 ThemeModeStore.ensure(context) 或直接传参）\nB. MainActivity.kt：setContent 内 `val mode by ThemeModeStore.mode.collectAsState()`；`ThemeController(colorSchemeMode = mode, ...)`（其余参数保持现状）；确保 AppRoot 在 MiuixTheme 内（现状已如此）→ 模式变化自动全局重组。\nC. SettingsScreenV093.kt：把\"主题颜色\"条目区域替换/补充为三个选项（跟随系统/浅色/深色）——用你从代码中确认可用的 Miuix 组件（优先 SettingsItem/RadioButton 类，若不确定就沿用本文件已有组件风格，如 clickable Row + 选中标记），点击调 ThemeModeStore.set(...)，当前选中项高亮。保留文件其余内容不变。\n\n注意：不改 MiuixComponents.kt 的主题色分支；不引入新依赖（SharedPreferences 为系统 API；MutableStateFlow 用 kotlinx.coroutines 已有依赖）。输出：每个文件 diff 摘要 + 状态流说明（设置页→MainActivity 生效链路）+ 自检（旋转/进程重建后模式保持=持久化生效）。",
+      "status": "completed",
+      "assignee": "ui-engineer",
+      "dependencies": [],
+      "attempt": 1,
+      "createdAt": 1787572283446,
+      "updatedAt": 1787572861614,
+      "attemptId": "69c2e0fa-61eb-42f7-bcb5-5d1a7bc454b1",
+      "reassigning": false,
+      "output": "设置页主题切换实现完成（4 文件）。A) 新建 data/ThemeModeStore.kt：object + SharedPreferences(\"lspfrifa_cfg\") key \"theme_mode\"（system/light/dark，默认 system）；read-only StateFlow mode（asStateFlow，同 FrameworkState 模式），init(context)/current()/set(mode)=persist.apply()+flow 更新；Monet* 编码回落 System、解码未知回落 System。B) LSPFRIFAApplication.onCreate +ThemeModeStore.init(this)（与 ScriptStore/LogStore 同模式，保证 UI 首次读取前 Context 就绪）。C) MainActivity setContent：硬编码 ColorSchemeMode.System → val mode by ThemeModeStore.mode.collectAsState() + remember(mode){ ThemeController(colorSchemeMode=mode, colorSpec=Spec2021, paletteStyle=Content) }（其余参数不变，AppRoot 仍在 MiuixTheme 内）；移除不再使用的 ColorSchemeMode import。D) SettingsScreenV093.kt：\"主题颜色\"静态 BasicComponent 条目 → Card{ 3×RadioButtonPreference(跟随系统/浅色/深色，各带 summary) }，新增私有 ThemeModeOption(title,summary,option,current)：selected=current==option、onClick=ThemeModeStore.set(option)；选中行标题/摘要自动取主题 primary 色高亮；其余条目未动。API 均按 miuix 0.9.4-rc01 pinned 提交 4a6b750b 源码验证（RadioButtonPreference 受控签名、ColorSchemeMode 枚举 System/Light/Dark、ThemeController 构造参、MiuixTheme 无颜色动画→即时切换），与项目 libs.versions.toml(miuix=0.9.4-rc01) 匹配；未引入新依赖。生效链路：设置页点击 → set() 持久化+_mode.value → MainActivity collectAsState 重组 → remember(mode) 新 ThemeController → MiuixTheme 全树 colorScheme/MiuixPageBackground 即时更新。自检：进程重建=Application.onCreate 读 prefs 回灌 _mode，模式保持；旋转=仅配置变化、无进程重建，内存状态保持；System 模式经 ThemeController.currentColors() 走 isSystemInDarkTheme() 自动跟随系统。未改 MiuixComponents.kt 主题分支。DSH 环境无 JDK，编译与真机验证需用户 RV2IDE 构建。"
+    }
+  ],
+  "taskSeq": 4
+}

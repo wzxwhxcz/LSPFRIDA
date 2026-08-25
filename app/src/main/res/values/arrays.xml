@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 默认作用域：空数组表示由用户在 LSPosed Manager 中自由勾选目标 -->
+    <string-array name="xposed_scope">
+    </string-array>
+</resources>
