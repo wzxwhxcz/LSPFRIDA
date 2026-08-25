@@ -5,7 +5,8 @@
 > 引擎复用 LSPosed 的 LSPlant（Android 15 / HyperOS 真机验证）；UI 为 Miuix（HyperOS 风格）Compose。
 
 ## ✨ 特性
-
+支持一下吧
+https://t.me/lspfrida
 ### 注入与脚本
 - **官方通道**：`LSP.hook()` → HookRouter → libxposed `hook()`（LSPlant 引擎）——A15 真机 ARMED/HIT 全链验证
 - **Frida GumJS 17.9.3（QuickJS）**：NDK 静态 devkit 内置，零外部依赖
