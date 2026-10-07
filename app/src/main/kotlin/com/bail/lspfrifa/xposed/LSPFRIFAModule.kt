@@ -41,10 +41,6 @@ class LSPFRIFAModule : XposedModule() {
 
         /** D15：专属 group 内的键。 */
         private const val INNER_KEY_CODE = "code"
-        private const val INNER_KEY_MODULES = "modules"
-
-        /** 脚本正文上限（与宿主 ScriptStore.MAX_SCRIPT_BYTES 一致，仅用于日志告警）。 */
-        private const val MAX_SCRIPT_BYTES = 400 * 1024
 
         /** D12：熔断闸键（与宿主 ScriptStore.circuitKey 严格一致）。闸断 = 不尝试注入。 */
         private fun circuitKey(pkg: String) = "circuitOpen." + pkg

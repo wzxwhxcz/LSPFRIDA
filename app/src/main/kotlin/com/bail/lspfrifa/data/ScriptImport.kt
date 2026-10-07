@@ -37,7 +37,6 @@ object ScriptImport {
     /** 来源标记（与 ScriptLibraryStore 的 origin 字段约定一致）。 */
     object Origin {
         const val CLIP = "clip"
-        const val MANUAL = "manual"
         fun file(uri: Uri) = "file:" + uri.toString()
         fun share(pkg: String?) = "share:" + (pkg ?: "unknown")
     }

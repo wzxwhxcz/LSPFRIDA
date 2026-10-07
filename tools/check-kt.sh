@@ -78,6 +78,66 @@ if [ "$issues" -eq 0 ]; then echo "✅ 已知坑扫描通过（0 规则命中，
   echo "❌ 共 $issues 处命中 —— 交付前必须清零"; exit 1
 fi
 
+# ============ 9. 死常量自查（v3 新增，2026-10-07） ============
+# 背景：本项目已累积 4 个"声明后从未使用"的常量，其中 2 个是**伪装成同步点的死代码**
+#   （注释写"与宿主 XX 一致"，实际零使用 → 将来改常量时会命中它，让人误以为已同步）：
+#     · ScriptStore.REMOTE_WRITE_BUDGET  （400KB 拦截后永不可达）
+#     · LSPFRIFAModule.MAX_SCRIPT_BYTES  （注释声称"与宿主一致，仅用于日志告警"，实为零使用）
+#     · LSPFRIFAModule.INNER_KEY_MODULES · ScriptImport.Origin.MANUAL
+# 判据（**必须区分可见性**，否则产生假阴性——本项目实证 CIRCUIT_THRESHOLD/CLIP 被误报）：
+#   · private const val → 仅同文件可见：同文件内、排除声明行/注释行后出现 0 次 = 死
+#   · public  const val → 可跨文件：全项目内、排除声明行/注释行后出现 0 次 = 死
+# 误报方向是"漏报"而非"误杀"（安全方向）；真需保留的常量请加 `// keep:` 注释。
+if command -v python3 >/dev/null 2>&1; then
+  dead=$(python3 - "$SRC" <<'PY'
+import re, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+files = list(root.rglob('*.kt'))
+texts = {f: f.read_text(encoding='utf-8').splitlines() for f in files}
+dead = []
+for f, lines in texts.items():
+    for i, line in enumerate(lines, 1):
+        m = re.search(r'^[ \t]*(private\s+)?const\s+val\s+(\w+)', line)
+        if not m:
+            continue
+        is_private, name = bool(m.group(1)), m.group(2)
+        if '// keep:' in line:
+            continue
+
+        def is_use(l, same_file_and_line=False):
+            if same_file_and_line:
+                return False
+            s = l.strip()
+            return (name in l and 'const val' not in l
+                    and not s.startswith('*') and not s.startswith('//')
+                    and not s.startswith('/*') and '://' not in l)
+
+        if is_private:
+            cnt = sum(1 for j, l in enumerate(lines, 1) if j != i and is_use(l))
+        else:
+            cnt = 0
+            for g, glines in texts.items():
+                for j, l in enumerate(glines, 1):
+                    if is_use(l, same_file_and_line=(g == f and j == i)):
+                        cnt += 1
+        if cnt == 0:
+            vis = 'private' if is_private else 'public'
+            dead.append(f"{f}:{i}: {name} ({vis})")
+for d in dead:
+    print(d)
+PY
+)
+  if [ -z "$dead" ]; then
+    echo "✅ 死常量扫描通过（0 命中，规则=private同文件/public全项目 双判据）"
+  else
+    echo "❌ 死常量 $(( $(printf '%s' "$dead" | wc -l) )) 处 —— 删除，或加 '// keep:' 注明保留理由"
+    printf '%s\n' "$dead" | sed 's/^/     /'
+    exit 1
+  fi
+else
+  echo "⚠️ python3 不可用——死常量扫描跳过"
+fi
+
 # ============ 8. 未导入符号检测（"使用了但未 import"——编译器级未解析前兆） ============
 # 背景：clickable/ImageVector/Column 等已多次因缺 import 编译失败，人工 grep 不可靠；
 # 本规则 = 符号库对照法（v2）：库 = 全项目 import 名全集（8a 自动生成）∪ 预置 compose/kotlinx
