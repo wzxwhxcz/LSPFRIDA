@@ -24,3 +24,6 @@ local.properties
 # --- Frida GumJS devkit（大文件，按 README 下载）---
 app/src/main/cpp/frida-gumjs-devkit/
 .agent-teams/
+
+# --- Kotlin 编译器会话缓存（IDE 垃圾，勿入库）---
+.kotlin/

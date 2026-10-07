@@ -136,7 +136,7 @@ fun ScriptEditorScreenV1(
             is ScriptImport.Outcome.Failed -> runHint = when (val f = outcome.reason) {
                 ScriptImport.Failure.Empty -> "导入失败：内容为空"
                 ScriptImport.Failure.Binary -> "导入失败：疑似二进制文件"
-                ScriptImport.Failure.TooLarge -> "导入失败：超过 1MB"
+                ScriptImport.Failure.TooLarge -> "导入失败：超过 " + (ScriptStore.MAX_SCRIPT_BYTES / 1024) + "KB"
                 is ScriptImport.Failure.ReadError -> "导入失败：" + f.message
             }
         }

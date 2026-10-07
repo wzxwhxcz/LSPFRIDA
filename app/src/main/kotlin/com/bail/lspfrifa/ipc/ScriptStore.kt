@@ -53,8 +53,10 @@ object ScriptStore {
     /** 脚本正文上限（D5：group 级约束；实测回填前取保守值，见设计文档 §4#5）。 */
     const val MAX_SCRIPT_BYTES = 400 * 1024
 
-    /** 单次远端写入的字节预算（超此值先拒绝，避免静默丢写）。 */
-    private const val REMOTE_WRITE_BUDGET = 700 * 1024
+    // A2（2026-10-07）：此处原有 `REMOTE_WRITE_BUDGET = 700 * 1024`，已删除。
+    // 原因：saveScript 先查 MAX_SCRIPT_BYTES（400KB）再查它（700KB），
+    //   400 < 700 ⇒ 该检查**永远不可达**，是死代码（全项目仅 2 处引用：定义 + 该检查）。
+    // 远端写入失败的真实兜底是下方的 commit() 返回值判定（codeOk），不依赖此预算。
 
     /** 保存结果：供导入/编辑器 UI 给出准确反馈。 */
     enum class SaveResult {
@@ -131,10 +133,9 @@ object ScriptStore {
             return SaveResult.REMOTE_REJECTED
         }
 
-        if (bytes > REMOTE_WRITE_BUDGET) {
-            Log.e(TAG, "正文超出远端写入预算: pkg=" + packageName + " bytes=" + bytes)
-            return SaveResult.SIZE_EXCEEDED
-        }
+        // A2（2026-10-07）：此处原有 `if (bytes > REMOTE_WRITE_BUDGET) { ... }` 检查，已删除。
+        // 原因：上方第 114 行已按 MAX_SCRIPT_BYTES(400KB) 拦截，而原预算为 700KB ⇒ 永远不可达。
+        // 远端写入失败的真实兜底是下方的 commit() 返回值判定。
 
         // commit() 同步返回框架是否接受（apply() 失败无感，不用）
         val codeOk = runCatching { groupPrefs.edit().putString(KEY_CODE, code).commit() }

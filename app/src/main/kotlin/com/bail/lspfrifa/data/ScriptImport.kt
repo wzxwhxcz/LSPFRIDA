@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import com.bail.lspfrifa.ipc.ScriptStore
 
 /**
  * D6/D7：脚本导入（文件 / 剪贴板 / 分享）。
@@ -22,8 +23,16 @@ object ScriptImport {
     /** 小于此值不可能是有效脚本。 */
     private const val MIN_BYTES = 1
 
-    /** 可导入的字节硬上限（1MB；实际下发另受 ScriptStore.MAX_SCRIPT_BYTES 约束）。 */
-    private const val HARD_LIMIT_BYTES = 1024 * 1024
+    /**
+     * 可导入的字节硬上限。
+     *
+     * A2（2026-10-07）：**直接对齐下发上限**（`ScriptStore.MAX_SCRIPT_BYTES`）。
+     * 原为独立的 1MB —— 造成"导入成功但下发失败"的中间带：用户在导入阶段收到成功，
+     * 到"应用/运行"时才看到 400KB 超限提示。改为单一真相源后两者不再可能漂移。
+     *
+     * 注：`const val` 引用另一 `const val` 是编译期内联，无运行时依赖。
+     */
+    private const val HARD_LIMIT_BYTES = ScriptStore.MAX_SCRIPT_BYTES
 
     /** 来源标记（与 ScriptLibraryStore 的 origin 字段约定一致）。 */
     object Origin {

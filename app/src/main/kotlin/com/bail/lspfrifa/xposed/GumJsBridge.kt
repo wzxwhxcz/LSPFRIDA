@@ -74,7 +74,21 @@ object GumJsBridge {
                     append(JavaBridgeBundle.SCRIPT)
                     append("\n;\n")
                 }
-                append(LSP_SHIM_JAVA.replace(LSP_ANDROID_VERSION_TOKEN, lspAndroidVersionLiteral()))
+                // A1（2026-10-07）：token 命中自检。
+                // 背景：token 与 shim 内字面量**均带引号**（见下方 LSP_ANDROID_VERSION_TOKEN 定义），
+                //   故 replace 未命中时**不抛错**，只会让 Java.androidVersion 静默变成占位字符串。
+                //   触发场景：改注释/动 raw string/编辑器转义导致 token 拼写漂移。
+                // 处置：**只 Log 不抛** —— loadScript 外层 catch{false} 会把异常转为"引擎全废"，
+                //   比"版本号错值"更糟（静默错值至少引擎可用）。
+                val shimJava = LSP_SHIM_JAVA.replace(LSP_ANDROID_VERSION_TOKEN, lspAndroidVersionLiteral())
+                if (shimJava == LSP_SHIM_JAVA) {
+                    android.util.Log.e(
+                        "LSPFRIFA-GumJS",
+                        "SHIM_TOKEN_MISS token=" + LSP_ANDROID_VERSION_TOKEN +
+                            " → Java.androidVersion 将返回占位字符串（引擎继续加载）",
+                    )
+                }
+                append(shimJava)
                 append("\n;\n")
                 append(scriptContent)
             }
