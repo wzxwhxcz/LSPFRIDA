@@ -199,6 +199,15 @@ class LSPFRIFAModule : XposedModule() {
             )
             earlyRouter = router
 
+            // ②.5 同步安装通道（契约 §2）：Java.use().m.implementation 的**同步反馈**落点。
+            //
+            // 为何必须在 loadScriptEarly 之前注册：新脚本注册 hook 的时刻就在 loadScript 里，
+            // 晚一步注册 = 第一批 implementation 赋值走不到同步通道（cpp lspSync 拿不到 handler
+            // 只能回 {"ok":false}，脚本侧同步 throw，用户看到"hook 挂不上"）。
+            // 失败只记 WARN 不中断：其余能力（legacy send 观察模式 / toast）仍然可用。
+            runCatching { GumJsBridge.setSyncHandler { json -> router.handleBridgeSync(json) } }
+                .onFailure { record(Log.WARN, "event=sync_handler_register_failed err=" + it.message) }
+
             // ★ 关键：必须先把消息回调挂上，再去加载脚本。
             //
             // 为何（这是一个真实缺陷的修复，不是防御性代码）：
@@ -382,6 +391,16 @@ class LSPFRIFAModule : XposedModule() {
                     hostLog = upstream,
                 )
             }
+
+            // 2.4 同步安装通道（契约 §2）：每次进入本链都重挂一次 handler。
+            //
+            // 接管场景（earlyRouter 复用）会不会"重复注册歧义"？不会：early 路径注册的闭包捕获的
+            // 是**同一个 router 实例**，这里捕获的 hookRouter 也是它，两次注册语义完全相同，
+            // 后者覆盖前者不改变任何行为。反而必须重挂 —— 若 early 路径注册失败（runCatching 吞了），
+            // 这里是唯一的补救点。
+            // 位置必须在 loadInitialScript 之前：脚本注册 hook 的时刻就在 loadScript 里。
+            runCatching { GumJsBridge.setSyncHandler { json -> hookRouter.handleBridgeSync(json) } }
+                .onFailure { record(Log.WARN, "event=sync_handler_register_failed err=" + it.message) }
 
             // 2.5 构造 IPC 实体，路由经构造器注入 —— 回调注册那一刻 router 即非 null，
             //     不存在“构造完→setHookRouter”的丢消息窗口（该窗口在提前注入下是真实漏洞：

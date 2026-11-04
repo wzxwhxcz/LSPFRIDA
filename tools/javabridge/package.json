@@ -1,0 +1,18 @@
+{
+  "name": "lspfrida-javabridge",
+  "private": true,
+  "type": "module",
+  "description": "把 frida-java-bridge 7.0.13 打包进 LSPFRIDA agent，并把方法替换落点改道 LSPlant（第一阶段：接通上游 Java 桥）",
+  "scripts": {
+    "build": "node build.mjs",
+    "verify-upstream": "node verify-upstream.mjs",
+    "test": "node --test test/adapter.test.mjs"
+  },
+  "dependencies": {
+    "buffer": "6.0.3",
+    "frida-java-bridge": "7.0.13"
+  },
+  "devDependencies": {
+    "esbuild-wasm": "0.28.2"
+  }
+}

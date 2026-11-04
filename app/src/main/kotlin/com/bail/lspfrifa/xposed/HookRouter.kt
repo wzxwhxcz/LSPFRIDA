@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.reflect.Executable
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -20,27 +21,52 @@ import java.util.concurrent.atomic.AtomicLong
  * A12~A16 全量验证）。因此业务 Java hook 一律转接 libxposed hook()，GumJS 仅做业务层与
  * 进程内 hook 请求转发（send 消息 → on_message → 本路由）。
  *
- * 链路（observe，与现状零差异）：
- *   JS: LSP.hook(cls, method, tag) → send → on_message → 本路由 tryHandle()
- *   → Class.forName + 反射取方法 → hook(executable).intercept(Hooker) → 命中 hostLog。
+ * 本文件是 **hook 注册 + hook 回调** 两侧的唯一 Kotlin 落点（契约见 tools/javabridge/
+ * BRIDGE-CONTRACT.md §2/§3；跨语言边界的任何改动都必须先改那份契约）。
  *
- * 链路（RouteB B1 replace，t7）：
- *   JS: Java.use("x.y").m.implementation = fn → send({t:"lsp.hook", mode:"replace", tag:"x.y#m"})
- *   → 本路由按 mode 建 replace intercept：
- *      chain.getArgs() 编码 → GumJsBridge.callJs(id, payload)（cpp 登记 pending + frida:rpc post）
- *      → JS rpc.exports.__lspHookReply(id, argsJson) 执行用户 fn → dispatcher 自动标准 reply
- *      → cpp on_message 消费 reply（命中 pending 才回传 Kotlin，其余静默）→ callJs 返回：
- *        ""                → 超时/异常 → chain.proceed()（原参，原方法必执行——目标不崩）
- *        {"__inner":true[,"args":[...]]} → async fn 内 await this.method(...) 原调用请求（B2：args 为
- *                            自定义参数，按 parameterTypes 转换后 proceed(convArgs)；无 args/不可转换
- *                            → 安全回退原参 proceed()）→ nativePostOriginalReply
- *                            → 再次 callJs(id,"") 续等最终 reply（同 id 栈复用，最多 500ms/阶段）
- *        {"over":false}    → fn 返回 undefined（观察语义）→ chain.proceed() 返回原值
- *        {"over":true,"r":…} → 解码 r（按 executable 返回类型转换）→ return r（跳过原方法）
+ * 链路（hook 注册，第一阶段 = 同步通道，契约 §2）：
+ *   JS: Java.use("x.y").m.implementation = fn
+ *   → adapter → GumJsBridge.lspSync(json) → cpp lsp_sync_call → [handleBridgeSync]：
+ *       ① 优先用 JS 钉住的 Class 全局引用（clsRef → GumJsBridge.newLocalRef）拿 Class，
+ *          绕开 Class.forName 的单点 loader 缺陷；拿到即 deleteGlobalRef（一次性凭据）。
+ *       ② 缺失/无效才回退 Class.forName(cls, false, targetLoader)。
+ *       ③ ctor=true 走 declaredConstructors，否则 declaredMethods 按名过滤，再按 sigs 归一化过滤。
+ *       ④ hook(executable).intercept(Hooker) → 同步返回 {"ok":true,"armed":n}；
+ *          失败 {"ok":false,"err":…,"kind":"cnfe|overload|arm|badreq"} → JS 侧同步 throw。
+ *   ★ 同步通道**失败不入队**：用户此刻正等着结果，D3 的迟到再武装只服务 legacy send 路径
+ *     （脚本类未加载时先 send 再等类出现，那个场景没有同步返回者）。
  *
- * B1/B2 已定案（Facts §5 / cap 裁定）：对象参数/返回为占位/透传（CAST_FAIL 安全回退原参）；
- * 同步 fn 内 this.method → shim 抛可读错误 → error reply → 按 over=false 处理。
- * B2（t15）：overload('I','java.lang.String') 精确选择（sigs 过滤）+ this.method 自定义参数。
+ * 链路（hook 命中回调，主路径 = 同线程同步 dispatcher，契约 §3；上游 implement() 的等价物）：
+ *   adapter 在脚本加载时创建 NativeCallback（入参/返回都是 payload JSON 的 UTF-8 指针），
+ *   经同步通道 {"op":"set_dispatcher","ptr":"0x…"} 交给 Kotlin（GumJsBridge.setDispatcher）。
+ *   命中时（app 线程）：
+ *     chain.getArgs()/getThisObject() 编码（对象/数组 = 线程局部引用裸指针 {"__p":"0x…","__c":…}）
+ *     → GumJsBridge.dispatchHook(payload)：**在同一 app 线程上执行 JS**（无 rpc 往返、无超时、
+ *       无 inner 循环）→ 返回 reply JSON → 按 kind 分派（§3.3）：
+ *        {"kind":"value","r":<E>}  → 解码 r 作为返回值，**不执行原方法**
+ *        {"kind":"default"}        → 返回类型默认值，**不执行原方法**
+ *        {"kind":"proceed"}        → chain.proceed()（"JS 侧 handler 未注册"兜底）
+ *        解析失败 / JS 抛错        → JS_ERR/DECODE_ERR + 返回类型默认值（**不 proceed**，上游语义）
+ *     dispatchHook 返回 null（dispatcher 未注册/cpp 执行失败）→ 退回下面的 async rpc 路径。
+ *   ★ 重入守卫（上游 pendingCalls 的等价物）：JS 回调里 this.foo() 的 JNI 调用会重新命中
+ *     LSPlant 并回到本文件——同线程同步调度下若再进 JS 就是无限递归，因此
+ *     `hookDepth`(ThreadLocal) > 0 时**直接 chain.proceed()**，不再进 JS。
+ *
+ * 链路（hook 命中回调，fallback = 旧 async rpc，保留不动）：
+ *   GumJsBridge.callJs(id, payload)（cpp 登记 pending + frida:rpc post）→ JS
+ *   rpc.exports.__lspHookReply(id,payloadJson) → 标准 reply → cpp → callJs 返回：
+ *        ""                            → 超时/引擎异常 → 兜底 proceed 原方法（REPLACE_TIMEOUT）
+ *        {"kind":"inner","args":[…]|null} → chain.proceed(转换后参数) + postOriginalReply
+ *                                        → 同 id 续等最终 reply（innerExecuted 防二次执行）
+ *   ★ 与旧 RouteB B1 的方向差异（最易踩）：fn 返回 undefined / 抛异常 / 返回不兼容值，
+ *     上游语义都是**跳过原方法**（Java 调用方拿默认值），本文件的旧实现曾反向 proceed。
+ *
+ * 对象生命周期（契约 §3.2，最易出事的一条）：
+ *  · 主路径用 `__p`（本线程局部引用裸指针）：不创建全局引用，JS 在同线程同步执行期间引用有效。
+ *  · 防护性回退 `__h`（GumJsBridge.newGlobalRef）：生命周期严格限定"本次回调"（含所有 inner
+ *    往返），[interceptReplace] 的 finally 统一 delete；sync 路径的 finally 同样释放。
+ *  · JS 反向给回的 `__h` 由 Kotlin newLocalRef 后**立即** deleteGlobalRef（局部引用独立
+ *    持有对象，删除全局引用不影响它）。
  */
 class HookRouter(
     private val targetPackage: String,
@@ -303,7 +329,19 @@ class HookRouter(
         val mode: String,
         /** B2：overload 精确选择（参数类型数组，如 ["I","java.lang.String"]）；null=挂全部 */
         val sigs: List<String>? = null,
+        /**
+         * 第一阶段（契约 §2.1）：true = 这次 methodName 指的是**构造器**（上游 bridge 的 `$init`
+         * wrapper），挂 declaredConstructors 而不是 declaredMethods。
+         * 缺省 false —— legacy send 路径（LSP.hook 观察模式）没有这个概念，行为零改动。
+         */
+        val ctor: Boolean = false,
     )
+
+    /**
+     * [armOnClass] 的结果（同步通道要把它变成回复 JSON，见 installSync）。
+     * @param reason 非 null = 一个候选都没找到（方法名/overload 不匹配），文本直接进 `err`。
+     */
+    private class ArmOutcome(val armed: Int, val failed: Int, val reason: String?)
 
     /** 已挂 handle（key = cls#method#sig#tag；t7 修复 t2 P0#1：签名入键，overload 不再互相覆盖/泄漏） */
     private val handles = ConcurrentHashMap<String, XposedInterface.HookHandle>()
@@ -337,8 +375,27 @@ class HookRouter(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /** replace 全局串行互斥（B1 冻结）：一次一个在途 replace 请求；并发命中排队（≤500ms/个） */
+    /**
+     * replace 全局串行互斥（B1 冻结）：**仅旧 async rpc 路径**用（一次一个在途请求 + ≤500ms/阶段）。
+     * 同步 dispatcher 路径**不用**它：JS 侧在同一 app 线程同步执行，再加锁只会在多线程并发命中时
+     * 互相拖住；GumJS 运行时自己按 scope 串行化回调（frida 的 NativeCallback 本就是多线程并发进 JS）。
+     */
     private val replaceLock = Any()
+
+    /**
+     * 同步 dispatcher 路径的重入深度（每个 router 实例 + 每条线程各一份）。
+     *
+     * 为什么必须有：sync dispatcher 是"在 app 线程直接执行 JS"。JS 回调里 `this.foo()`（真实
+     * wrapper 的方法调用）会再次命中 LSPlant 并回到 interceptReplace —— 若此时又进 JS，就是
+     * 无限递归 / 同线程自锁。上游用 `pendingCalls` + `STRATEGY_DIRECT` 达到同样效果：
+     * 重入的调用**直接执行原方法**，不再经过 user fn。
+     *
+     * 用匿名子类而不是 ThreadLocal.withInitial：withInitial 是 Java 8 API（Android 需 API 24+
+     * 或 desugaring），本模块 minSdk 不保证，故用最保守写法（各 API 级别都可用）。
+     */
+    private val hookDepth = object : ThreadLocal<Int>() {
+        override fun initialValue(): Int = 0
+    }
 
     private val reqSeq = AtomicLong(0)
 
@@ -393,7 +450,18 @@ class HookRouter(
         }
     }
 
-    private fun unhookByTag(tag: String) {
+    /**
+     * 按 tag 卸掉全部 overload 手柄。
+     *
+     * @return 命中的已挂 handle 条数（0 = 没挂过）。同步 uninstall 通道需要这个计数来回答
+     *         `{"ok":false,"missing":true}`，legacy send 路径忽略返回值（行为零改动）。
+     *
+     * @Synchronized 的理由：同步通道的 uninstall 跑在 JS 线程，而 install（armOnClass）和
+     * D3 的三级再武装在别的线程 —— 不加锁时可能出现"uninstall 枚举完 key、arm 又挂上同一个
+     * key"的竞态，表现为"卸了但还在"。两把锁都是本实例的监视器，互不嵌套，无死锁风险。
+     */
+    @Synchronized
+    private fun unhookByTag(tag: String): Int {
         // D3：同 tag 的待挂项也该撤（否则“卸了又被迟到挂上”语义矛盾）。
         // 用“先筛键再逐个 remove”，不依赖 entrySet().removeIf 的容器实现细节。
         pendingHooks.filterValues { it.tag == tag }.keys.toList()
@@ -403,6 +471,7 @@ class HookRouter(
             handles.remove(key)?.let { h -> runCatching { h.unhook() } }
         }
         if (matched.isNotEmpty()) hostLog("[lsp-hook] UNHOOKED tag=$tag count=${matched.size}")
+        return matched.size
     }
 
     /**
@@ -416,6 +485,248 @@ class HookRouter(
         handles.values.forEach { h -> runCatching { h.unhook() } }
         handles.clear()
         hostLog("[lsp-hook] UNHOOKED all=$n")
+    }
+
+    // ==================== 同步安装通道（契约 §2；JS → lsp_sync_call → 本函数） ====================
+
+    /**
+     * 同步通道总入口：cpp `lsp_sync_call` → `GumJsBridge.lspSync` → 这里。
+     *
+     * 三条纪律（缺一即毁引擎）：
+     *  1. **永不抛**：调用方是 GumJS 的 JS 线程，Kotlin 异常逃到 JNI 边界 = 引擎直接不可用；
+     *     故最外层 catch Throwable，连 Error 族一起转成 `{"ok":false,…}`。
+     *  2. **不入队**：与 legacy send 路径相反，同步通道的调用方正阻塞等待结果，所以"类还没加载"
+     *     也必须立刻同步失败（kind=cnfe），不能丢进 D3 待挂队列让用户等到下次脚本重跑。
+     *  3. 只在真正需要跨线程状态时才加锁（armOnClass/unhookByTag 是 @Synchronized；
+     *     本函数自身不持任何 cpp 侧锁 —— 契约 §1.3）。
+     *
+     * @param json 形如 `{"op":"install"|"uninstall"|"set_dispatcher",…}`
+     * @return 结果 JSON：`{"ok":true,…}` / `{"ok":false,"err":…,"kind":…}`
+     */
+    fun handleBridgeSync(json: String): String {
+        var op = "?"
+        return try {
+            val req = JSONObject(json)
+            op = strField(req, "op")
+            when (op) {
+                "install" -> installSync(req)
+                "uninstall" -> uninstallSync(req)
+                "set_dispatcher" -> setDispatcherSync(req)
+                else -> syncFail("badreq", "unknown op='$op'")
+            }
+        } catch (t: Throwable) {
+            // 连这里的日志/拼串都再兜一层 runCatching：极端情况下（栈溢出后内存紧张）任何
+            // 二次异常都不许逃出去——宁可返回一个固定字符串。
+            val msg = t.message ?: t.javaClass.simpleName
+            runCatching { hostLog("[lsp-hook] SYNC_ERR op=$op err=$msg") }
+            runCatching { syncFail("badreq", "sync handler crashed: $msg") }
+                .getOrElse { "{\"ok\":false,\"err\":\"sync handler crashed\",\"kind\":\"badreq\"}" }
+        }
+    }
+
+    /**
+     * 契约 §2.1：install —— 同步挂一个 overload（或构造器）并回报 armed 计数。
+     *
+     * 类解析优先级：clsRef（JS 钉住的 Class 全局引用）→ Class.forName(targetLoader)。
+     * 前者是本阶段最关键的改进：`Java.use()` 在 bridge 里已经解析出了真实 Class 对象
+     * （可能来自插件/加固/isolated-split 的 loader），Kotlin 这边的 targetLoader 只是
+     * onPackageReady/Application 阶段的一次性快照，未必看得见同一份类（REPORT §3.4）。
+     */
+    private fun installSync(req: JSONObject): String {
+        val cls = strField(req, "cls")
+        val method = strField(req, "method")
+        val tag = strField(req, "tag")
+        if (cls.isEmpty() || method.isEmpty() || tag.isEmpty()) {
+            return syncFail("badreq", "install needs cls/method/tag")
+        }
+        val ctor = req.optBoolean("ctor")
+        // 契约 §2.1：sigs 是"该 overload 的参数类型 className 列表"；**缺失**（null）与
+        // **空数组**（无参 overload）语义不同，不能合并：空数组必须精确匹配"零参数"。
+        val sigsArr = req.optJSONArray("sigs")
+        val sigs: List<String>? = if (sigsArr == null) {
+            null
+        } else {
+            (0 until sigsArr.length()).map { sigsArr.getString(it) }
+        }
+        // isStatic 由 Kotlin 侧从 Modifier 取实际值（intercept 时按 executable 判定），
+        // 协议里的字段仅作 JS 侧声明，这里不采信（避免"声明与事实不符"污染 payload）。
+
+        val lookup = lookupClass(cls, strField(req, "clsRef"))
+        val clazz = lookup.clazz
+            ?: return syncFail("cnfe", lookup.err ?: ("class not found: " + cls))
+
+        val hookReq = HookRequest(
+            clsName = cls,
+            methodName = method,
+            tag = tag,
+            act = "",
+            mode = "replace",
+            sigs = sigs,
+            ctor = ctor,
+        )
+        val outcome = armOnClass(hookReq, clazz)
+        val reason = outcome.reason
+        if (reason != null) {
+            return syncFail("overload", reason)
+        }
+        if (outcome.armed == 0 && outcome.failed > 0) {
+            // 全部候选都挂失败（LSPlant 拒绝/框架异常）→ 明确报 arm 失败，别让用户以为挂上了
+            return syncFail(
+                "arm",
+                "all ${outcome.failed} target(s) failed to arm " +
+                    "(cls=$cls method=$method; see logcat ARM_FAIL)",
+            )
+        }
+        return syncOk(outcome.armed)
+    }
+
+    /** 契约 §2.2：uninstall —— 按 tag 卸 handle；没挂过要如实回答 missing（JS 侧只 warn 不抛）。 */
+    private fun uninstallSync(req: JSONObject): String {
+        val tag = strField(req, "tag")
+        if (tag.isEmpty()) return syncFail("badreq", "uninstall needs tag")
+        val n = unhookByTag(tag)
+        if (n > 0) {
+            return JSONObject().put("ok", true).put("unhooked", n).toString()
+        }
+        return JSONObject()
+            .put("ok", false)
+            .put("err", "no armed hook with tag=$tag")
+            .put("missing", true)
+            .toString()
+    }
+
+    /**
+     * 契约 §3 主路径的注册：JS adapter 建好 NativeCallback 后把函数指针交过来。
+     *
+     * ptr 的字符串形态：**十进制**（Lead 侧 `ptr.toString(10)`）。这里同时容忍 `0x…`
+     * 十六进制写法和负数十进制（指针位型按 jlong 传递，不做算术）。
+     * ptr="0" 或 "0x0" = 清除（脚本卸载/重载时用），返回 ok。
+     */
+    private fun setDispatcherSync(req: JSONObject): String {
+        val raw = strField(req, "ptr")
+        if (raw.isEmpty()) return syncFail("badreq", "set_dispatcher needs ptr")
+        val ptr = parseHandle(raw)
+        GumJsBridge.setDispatcher(ptr)
+        if (ptr == 0L) {
+            hostLog("[lsp-hook] SYNC_DISPATCHER_CLEAR")
+        } else {
+            hostLog("[lsp-hook] SYNC_DISPATCHER_SET ptr=" + handleHex(ptr))
+        }
+        return JSONObject().put("ok", true).toString()
+    }
+
+    /** 类解析结果（同步通道用）：clazz 非空即成功；err/cnfe 供 kind=cnfe 回答。 */
+    private class ClassLookup(val clazz: Class<*>?, val err: String?)
+
+    /**
+     * 契约 §2.1 的类解析：**先用 clsRef**，无效才回退 forName。
+     *
+     * 关于 deleteGlobalRef 的时机：clsRef 是 JS 侧 `lsp_new_global_ref` 钉的一次性凭据，
+     * 契约要求"拿到后**立即**删除"。放在 finally 而不是成功分支，是因为 newLocalRef 失败
+     * （引用失效/已被释放）时也必须删，否则每失败一次泄漏一个全局引用，而全局引用表很小
+     * （ART 默认 512 项），几次泄漏就可能拖垮整个进程的 JNI。
+     * 注意：局部引用独立持有对象，删掉全局引用后 `clazz` 仍有效。
+     */
+    private fun lookupClass(clsName: String, clsRefRaw: String): ClassLookup {
+        val handle = parseHandle(clsRefRaw)
+        if (handle != 0L) {
+            var fromRef: Any? = null
+            try {
+                fromRef = GumJsBridge.newLocalRef(handle)
+            } catch (t: Throwable) {
+                runCatching { hostLog("[lsp-hook] SYNC_REF_ERR cls=$clsName err=" + t.message) }
+            } finally {
+                runCatching { GumJsBridge.deleteGlobalRef(handle) }
+            }
+            val fromRefCls = fromRef as? Class<*>
+            when {
+                fromRefCls == null -> hostLog(
+                    "[lsp-hook] SYNC_REF_INVALID cls=$clsName ref=" + handleHex(handle) +
+                        " → 回退 Class.forName"
+                )
+                fromRefCls.name != clsName ->
+                    // 名字不符 = JS 侧钉错类（协议违例）。不静默采信：采信了会让 handles 的
+                    // key（按 clsName 拼）与实际被 hook 的类不一致，卸载/去重都会错乱。
+                    hostLog(
+                        "[lsp-hook] SYNC_REF_NAME_MISMATCH want=$clsName got=" + fromRefCls.name +
+                            " loader=" + fromRefCls.classLoader + " → 回退 Class.forName"
+                    )
+                else -> {
+                    // defining loader 校验的落地：不去比较"是否等于 targetLoader"（同名类多 loader
+                    // 时那一份可能正是业务实际使用的那份），而是把真实定义 loader 记下来——
+                    // "挂上了但业务走另一份 Class"这类问题只能靠这条日志定位（REPORT §3.3/§3.4）。
+                    hostLog(
+                        "[lsp-hook] SYNC_CLS_BY_REF cls=$clsName loader=" + fromRefCls.classLoader
+                    )
+                    return ClassLookup(fromRefCls, null)
+                }
+            }
+        }
+        return try {
+            val c = Class.forName(clsName, false, targetLoader)
+            hostLog("[lsp-hook] SYNC_CLS_BY_FORNAME cls=$clsName loader=" + c.classLoader)
+            ClassLookup(c, null)
+        } catch (e: ClassNotFoundException) {
+            ClassLookup(null, "class not found: $clsName (loader=$targetLoader)")
+        } catch (t: Throwable) {
+            ClassLookup(null, "class resolve failed: $clsName err=" + t.message)
+        }
+    }
+
+    /** 同步通道成功回答。`{"ok":true,"armed":n}`（契约 §2.1 冻结字段，不加额外字段）。 */
+    private fun syncOk(armed: Int): String =
+        JSONObject().put("ok", true).put("armed", armed).toString()
+
+    /** 同步通道失败回答：kind ∈ cnfe|overload|arm|badreq（契约 §2.1；JS 侧据此同步 throw）。 */
+    private fun syncFail(kind: String, err: String): String =
+        JSONObject().put("ok", false).put("err", err).put("kind", kind).toString()
+
+    /** JSON 字段取字符串：optString 对显式 JSON null 会返回字面量 "null"，不可直接采信。 */
+    private fun strField(o: JSONObject, key: String): String {
+        val v = o.opt(key)
+        return if (v is String) v else ""
+    }
+
+    /**
+     * 句柄/指针的十六进制编码：`java.lang.Long.toHexString` 按**无符号**解释补码，
+     * 与 [parseHandle] 的手工无符号解析严格互逆（高位为 1 的 jlong 也能原样往返）。
+     */
+    private fun handleHex(h: Long): String = "0x" + java.lang.Long.toHexString(h)
+
+    /**
+     * 解析句柄/指针字符串 → jlong 位型（不做算术）。支持三种写法：
+     *  · 十进制（`140234567890123`，Lead 侧的 set_dispatcher 约定；负数亦按位型接受）
+     *  · `0x…` / `0X…` 十六进制（JS 侧 `ptr(h).toString()` 的形态，如 clsRef）
+     *  · 裸十六进制（无前缀，长度 ≤16 位时按十六进制）
+     *
+     * 为何不直接 `toLong(16)`：① 带 `0x` 前缀会抛 NumberFormatException；② 高位为 1 的指针
+     * 用有符号解析会溢出抛错。手工按位累积（移位或）对 64 位是精确定义的，且不依赖
+     * `parseUnsignedLong`（Java 8 API，minSdk 不保证）。解析失败一律返回 0（= 无效句柄）。
+     */
+    private fun parseHandle(raw: String): Long {
+        val t = raw.trim()
+        if (t.isEmpty()) return 0L
+        if (t.startsWith("0x") || t.startsWith("0X")) {
+            val hex = t.substring(2)
+            if (hex.isEmpty() || hex.length > 16) return 0L
+            var v = 0L
+            for (c in hex) {
+                val d = Character.digit(c, 16)
+                if (d < 0) return 0L
+                v = (v shl 4) or d.toLong()
+            }
+            return v
+        }
+        // 带符号十进制（含负数）优先；不是十进制再按裸十六进制处理
+        t.toLongOrNull()?.let { return it }
+        if (t.length > 16) return 0L
+        var v = 0L
+        for (c in t) {
+            val d = Character.digit(c, 16)
+            if (d < 0) return 0L
+            v = (v shl 4) or d.toLong()
+        }
+        return v
     }
 
     /** 解析 Frida 消息协议 {type:"send", payload:{t:"lsp.hook",...}}；非本类消息返回 null。 */
@@ -489,42 +800,59 @@ class HookRouter(
     }
 
     /**
-     * D3：真正的挂载路径（类已可解析）。由 handle 与 flushPending 共用。
+     * D3：真正的挂载路径（类已可解析）。由 legacy 消息路径（handle）、flush 路径（锚点/轮询）
+     * 与第一阶段同步 install 通道共用。
      *
-     * @Synchronized 的必要性：调用方有两条并发路径 —— 消息路径（handle）与
-     * flush 路径（锚点/轮询）。不加锁时，两个线程可能同时通过 handles.containsKey 检查，
+     * @Synchronized 的必要性：调用方有多条并发路径 —— 消息路径（handle）、flush 路径（锚点/轮询）、
+     * 同步 install（JS 线程）。不加锁时，两个线程可能同时通过 handles.containsKey 检查，
      * 于是对同一方法挂两次：后一个 handle 覆盖 map 中的前一个，前者失去引用 → **泄漏且卸不掉**。
      * 锁粒度是整个 router 实例；arm 是低频操作（仅注册时刻），无性能顾虑。
+     *
+     * @return armed/failed 计数 + 未命中原因（reason 非 null = 一条都没挂，且原因是"没这个
+     *         overload/方法"）。为什么改成返回值：同步通道必须把结果变成回复 JSON（契约 §2.1），
+     *         而 legacy 路径照旧忽略返回值 —— 因此这里不抛异常、也不改任何既有日志行的文本。
      */
     @Synchronized
-    private fun armOnClass(req: HookRequest, clazz: Class<*>) {
-        val allMethods = clazz.declaredMethods.filter { it.name == req.methodName }
-        if (allMethods.isEmpty()) {
+    private fun armOnClass(req: HookRequest, clazz: Class<*>): ArmOutcome {
+        // 第一阶段：候选 executable。
+        //  · ctor=true → declaredConstructors（构造器没有 name 可筛；req.methodName 只是 bridge
+        //    的 $init wrapper 名，不参与匹配）
+        //  · 否则 → declaredMethods 按名过滤（只挂"本类直接声明"的方法，与现状一致）
+        val candidates: List<Executable> = if (req.ctor) {
+            clazz.declaredConstructors.toList()
+        } else {
+            clazz.declaredMethods.filter { it.name == req.methodName }
+        }
+        if (candidates.isEmpty()) {
             // 方法不是"本类直接声明"（如只写接口方法名）或重载名不存在：提示而非静默
+            if (req.ctor) {
+                hostLog("[lsp-hook] MISS ctor=${req.clsName} (declared constructors only)")
+                return ArmOutcome(0, 0, "no declared constructor: " + req.clsName)
+            }
             hostLog("[lsp-hook] MISS method=${req.clsName}#${req.methodName} (declared methods only)")
-            return
+            return ArmOutcome(
+                0, 0,
+                "no declared method ${req.clsName}#${req.methodName} (declared methods only)"
+            )
         }
 
-        // B2：overload 精确选择——按 parameterTypes 描述符串过滤（缺省 sigs=null 时挂全部，现状零改动）
-        val methods: List<Method> = if (req.sigs == null) {
-            allMethods
-        } else {
-            val want = req.sigs.map { normalizeSig(it) }
-            allMethods.filter { m ->
-                m.parameterTypes.map { descriptorOf(it) } == want
-            }.also { filtered ->
-                if (filtered.isEmpty()) {
-                    hostLog(
-                        "[lsp-hook] MISS_OVERLOAD ${req.clsName}#${req.methodName} sigs=${req.sigs} " +
-                            "(found=${allMethods.size} overloads)"
-                    )
-                }
-            }
+        // B2/第一阶段：overload 精确选择——按 parameterTypes 描述符串过滤
+        // （缺省 sigs=null 时挂全部，legacy send 路径行为零改动）
+        val targets = filterBySigs(candidates, req.sigs)
+        if (targets.isEmpty()) {
+            hostLog(
+                "[lsp-hook] MISS_OVERLOAD ${req.clsName}#${req.methodName} sigs=${req.sigs} " +
+                    "(found=${candidates.size} overloads)"
+            )
+            return ArmOutcome(
+                0, 0,
+                "no overload matching sigs=${req.sigs} (found=${candidates.size} overload(s))"
+            )
         }
 
         var armed = 0
         var failed = 0
-        for (m in methods) {
+        for (m in targets) {
             // t7（修复 t2 P0#1）：签名入键——每个 overload 独立 key，unhookAll/重注册不再互相覆盖/泄漏
             val key = buildKey(req, methodSig(m))
             if (handles.containsKey(key)) continue
@@ -543,6 +871,7 @@ class HookRouter(
                 "sigs=${req.sigs ?: "all"} tag=${req.tag}" +
                 (if (failed > 0) " failed=$failed" else "")
         )
+        return ArmOutcome(armed, failed, null)
     }
 
     /** intercept 主体：observe（现状）与 replace（RouteB）分流。 */
@@ -573,58 +902,147 @@ class HookRouter(
         return chain.proceed()
     }
 
-    /** replace（RouteB B1）：参数编码 → 同步 JS 调用 → 按回复决定 proceed/替换返回。 */
+    /**
+     * replace 分流（契约 §3）：主路径 = **同线程同步 dispatcher**；fallback = 旧 async rpc。
+     *
+     * 重入守卫必须放在**最前面**（连 hasDispatcher 判断与 payload 编码都不做）：
+     * JS 回调里 `this.foo()`（真实 wrapper 的方法调用）会经 JNI 再次命中 LSPlant 回到这里，
+     * 同线程同步调度下若再进 JS 就是无限递归/自锁。上游的做法（`pendingCalls` +
+     * `STRATEGY_DIRECT`）也是这一层直接走原方法。
+     *
+     * 守卫只在 replace 模式生效：observe 模式没有"进 JS"的路径（只记日志 + proceed），
+     * 且 `this.foo()` 在 observe 下本来就该正常命中并再记一次日志（诊断价值）。
+     */
     private fun interceptReplace(chain: XposedInterface.Chain, req: HookRequest): Any? {
+        // 用 ThreadLocal 而不是全局标志：并发命中的不同 app 线程各有各的深度，不能互相干扰。
+        val depth = hookDepth.get() ?: 0
+        if (depth > 0) {
+            hostLog("[lsp-hook] REENTRY_PROCEED tag=${req.tag} depth=$depth")
+            return chain.proceed()
+        }
+        if (!GumJsBridge.hasDispatcher()) {
+            // 没有 dispatcher = 引擎侧还没装 adapter 的同步回调（老脚本/降级）→ 走旧 async rpc，
+            // 语义与改造前完全一致。
+            return interceptReplaceAsync(chain, req)
+        }
+        hookDepth.set(depth + 1)
+        val refs = ArrayList<Long>(4)
+        try {
+            return interceptReplaceSync(chain, req, refs)
+        } catch (t: Throwable) {
+            // 与 async 路径同一纪律：不在此处再次 chain.proceed()——若异常来自原方法
+            // （proceed 抛出），再 proceed 会让原方法执行两遍；按框架语义直接上抛
+            // （protective 下由框架捕获记录）。
+            hostLog("[lsp-hook] REPLACE_ERR tag=${req.tag} err=" + t.message)
+            throw t
+        } finally {
+            // ThreadLocal 重置（不用 remove：拦截线程会复用，remove 只会让下次重新分配）
+            hookDepth.set(depth)
+            releaseGlobalRefs(refs)
+        }
+    }
+
+    /**
+     * 主路径（契约 §3）：同步 dispatcher —— 在**当前 app 线程**上执行 JS 并直接拿回 reply JSON。
+     *
+     * 为什么必须同步：上游 `implementation` 回调就是 ART 在调用线程上直接调的 NativeCallback，
+     * 因此 JS 里 `this.foo()` 想拿到原方法的**返回值**，只有当"原方法执行"发生在同一次同步
+     * 调用里才可能；rpc 往返（投递到 gum-js-loop 线程）天然做不到（旧 B1 只能返回 Promise）。
+     *
+     * 无 timeout / 无 inner 循环 / 无 postOriginalReply：JS 就在本线程栈上，异常由 adapter
+     * 内部兜成合法 JSON；`dispatchHook` 返回 null 的唯一含义是"dispatcher 未注册 / 没进 JS"。
+     *
+     * @param refs 本路径可能创建的全局引用（`__p` 编码失败时的 `__h` 回退），由调用方 finally 释放
+     */
+    private fun interceptReplaceSync(
+        chain: XposedInterface.Chain,
+        req: HookRequest,
+        refs: MutableList<Long>,
+    ): Any? {
+        val payload = buildHookPayload(chain, req.tag, refs, rawPtr = true)
+        val reply = GumJsBridge.dispatchHook(payload)
+        if (reply == null) {
+            // null 只可能是"dispatcher 未注册 / 未进 JS"（adapter 内部保证任何异常都返回合法
+            // JSON）——因此退回 async rpc 不会二次执行用户 fn，安全。
+            hostLog("[lsp-hook] DISPATCH_FALLBACK tag=" + req.tag)
+            return interceptReplaceAsync(chain, req)
+        }
+        return decodeReply(reply, chain, req, false, null, unparsableToDefault = true)
+    }
+
+    /**
+     * fallback：旧 async rpc 路径（cpp pending + frida:rpc 往返 + inner 嵌套循环），逻辑不动。
+     * 只在没有 dispatcher 或 dispatcher 调用失败时进入；[replaceLock] 也只在这条路径上生效
+     * （同步路径在同一 app 线程执行 JS，加锁只会互相拖住）。
+     */
+    private fun interceptReplaceAsync(chain: XposedInterface.Chain, req: HookRequest): Any? {
         return synchronized(replaceLock) {
+            val refs = ArrayList<Long>(4)
             try {
-                val payload = buildHookPayload(chain, req.tag)
+                val payload = buildHookPayload(chain, req.tag, refs, rawPtr = false)
                 val id = "lsp-${reqSeq.incrementAndGet()}"
                 var reply = GumJsBridge.callJs(id, payload)
 
-                // 嵌套服务循环：async fn 内 await this.method(...)（同 id 栈复用；B2 支持自定义参数）。
-                // innerExecuted/lastInnerResult：原方法已在内层执行过 → 后续超时/观察/CAST/JS_ERR
+                // 嵌套服务循环：async fn 内 await this.method(...)（同 id 栈复用；支持自定义参数）。
+                // innerExecuted/lastInnerResult：原方法已在内层执行过 → 后续超时/proceed 兜底
                 // 一律复用其结果（**不再二次 chain.proceed()——否则原方法执行两遍**）。
                 var innerExecuted = false
                 var lastInnerResult: Any? = null
-                var inner = parseInnerArgs(reply)
+                var inner = parseInner(reply)
                 while (inner != null) {
-                    // B2：非空 args 且按参数类型转换成功 → proceed(convArgs)；否则安全回退原参
-                    val method = chain.executable as? Method
-                    val conv = if (inner.length() > 0 && method != null) {
-                        decodeArgs(method.parameterTypes, inner)
-                    } else null
+                    // args 缺失/null = 原参回退；给了数组就按参数类型转换（转换失败也回退原参）
+                    val argsArr = inner.optJSONArray("args")
+                    val conv = if (argsArr != null) {
+                        decodeArgs(chain.executable.parameterTypes, argsArr)
+                    } else {
+                        null
+                    }
                     val origResult = if (conv != null) chain.proceed(conv) else chain.proceed()
                     lastInnerResult = origResult
                     innerExecuted = true
-                    GumJsBridge.postOriginalReply(id, encodeRet(origResult))
+                    GumJsBridge.postOriginalReply(id, encodeRet(origResult, refs))
                     reply = GumJsBridge.callJs(id, "")
-                    inner = parseInnerArgs(reply)
+                    inner = parseInner(reply)
                 }
 
-                when {
-                    reply.isEmpty() -> {
-                        hostLog("[lsp-hook] REPLACE_TIMEOUT tag=${req.tag} id=$id")
-                        if (innerExecuted) lastInnerResult else chain.proceed()
-                        // 超时兜底：内层未执行 → 原方法必执行；已执行 → 复用其结果
-                    }
-                    else -> decodeReply(reply, chain, req, innerExecuted, lastInnerResult)
+                if (reply.isEmpty()) {
+                    // 超时兜底：内层未执行 → 原方法必执行；已执行 → 复用其结果
+                    hostLog("[lsp-hook] REPLACE_TIMEOUT tag=${req.tag} id=$id")
+                    return@synchronized if (innerExecuted) lastInnerResult else chain.proceed()
                 }
+                decodeReply(reply, chain, req, innerExecuted, lastInnerResult, unparsableToDefault = false)
             } catch (t: Throwable) {
                 // 注意：不在此处再次 chain.proceed()——若异常来自原方法（proceed 抛出），
                 // 再 proceed 会导致原方法二次执行；按框架语义直接上抛（protective 下由框架捕获记录）。
-                hostLog("[lsp-hook] REPLACE_ERR tag=${req.tag} err=${t.message}")
+                hostLog("[lsp-hook] REPLACE_ERR tag=${req.tag} err=" + t.message)
                 throw t
+            } finally {
+                releaseGlobalRefs(refs)
             }
         }
     }
 
+    /**
+     * 契约 §3.3 回复解码。
+     *
+     * **语义方向（与旧 RouteB B1 相反，最容易踩）**：`undefined` / JS 抛错 / 返回不兼容值
+     * 都是"**跳过原方法**、Java 调用方拿返回类型默认值"，不是 proceed。proceed 只有两个
+     * 合法来源：`{"kind":"proceed"}`（JS 侧 handler 未注册的兜底）与 async 路径的超时。
+     *
+     * @param innerExecuted/lastInnerResult async 路径守卫：原方法已在内层执行过时不能再 proceed
+     * @param unparsableToDefault 协议不可解析时的方向：
+     *        true（同步主路径）= 返回默认值、不 proceed（Lead 2026 最新裁定，上游 error 语义）；
+     *        false（async fallback）= proceed 兜底（冻结合同 §3.3 最后一行，保持旧路径行为）。
+     */
     private fun decodeReply(
         reply: String,
         chain: XposedInterface.Chain,
         req: HookRequest,
         innerExecuted: Boolean,
         lastInnerResult: Any?,
+        unparsableToDefault: Boolean,
     ): Any? {
+        val retType = returnTypeOf(chain.executable)
         return try {
             val json = JSONObject(reply)
             // 不用 optString(name, null)：
@@ -634,75 +1052,141 @@ class HookRouter(
             val errRaw = json.opt("err")
             val err = if (errRaw == null || errRaw === JSONObject.NULL) null else errRaw.toString()
             if (err != null) {
+                // JS 抛错（adapter 的 error 分支）：上游语义 = Java 拿返回类型默认值、
+                // 原方法**不执行**（旧实现这里错了，改成 proceed）
                 hostLog("[lsp-hook] JS_ERR tag=${req.tag} err=$err")
-                // JS 抛错：内层已执行 → 复用原方法结果（不二次执行）；否则 proceed
-                return if (innerExecuted) lastInnerResult else chain.proceed()
+                return defaultValueFor(retType)
             }
-            if (!json.optBoolean("over")) {
-                // 观察语义（返回原值）：内层已执行 → 该值即原方法结果；否则 proceed
-                return if (innerExecuted) lastInnerResult else chain.proceed()
+            when (strField(json, "kind")) {
+                "value" -> return decodeValueReply(retType, json.opt("r"), req)
+                "default" -> return defaultValueFor(retType)
+                "proceed" -> return if (innerExecuted) lastInnerResult else chain.proceed()
+                else -> {
+                    hostLog("[lsp-hook] REPLACE_BADKIND tag=${req.tag} kind=" + strField(json, "kind"))
+                    if (unparsableToDefault) {
+                        defaultValueFor(retType)
+                    } else {
+                        if (innerExecuted) lastInnerResult else chain.proceed()
+                    }
+                }
             }
-            val r = json.opt("r")
-            val retType = (chain.executable as? Method)?.returnType ?: Void.TYPE
-            if (retType == Void.TYPE) {
-                return null   // void：返回被框架忽略
-            }
-            val v = decodeRet(retType, r)
-            if (v === RET_FALLBACK) {
-                hostLog("[lsp-hook] CAST_FAIL tag=${req.tag} retType=${retType.simpleName} r=$r")
-                return if (innerExecuted) lastInnerResult else chain.proceed()
-            }
-            v
         } catch (t: Throwable) {
-            hostLog("[lsp-hook] DECODE_ERR tag=${req.tag} err=${t.message}")
-            if (innerExecuted) lastInnerResult else chain.proceed()
+            hostLog("[lsp-hook] DECODE_ERR tag=${req.tag} err=" + t.message)
+            if (unparsableToDefault) {
+                defaultValueFor(retType)
+            } else {
+                if (innerExecuted) lastInnerResult else chain.proceed()
+            }
         }
     }
 
-    // ---- 编解码 ----
+    // ---- 编解码（契约 §3.2） ----
 
     private object RET_FALLBACK
 
-    /** argsJson 契约（与 t6 shim 严格一致）：{"key":tag,"args":[...],"this":{...}|null} */
-    private fun buildHookPayload(chain: XposedInterface.Chain, tag: String): String {
+    /**
+     * 回调载荷（契约 §3.1）：`{"key","args","this","ret","isStatic"}`。
+     *
+     * 对象值的编码方式随通道而变（adapter 两种都解码，见 BRIDGE-CONTRACT §3.2）：
+     *  · rawPtr=true（同步 dispatcher 主路径）：`{"__p":"0x<线程局部引用裸指针>","__c":…}`。
+     *    最贴近上游：JS 在**同一条 app 线程**上同步执行，局部引用在回调期间始终有效，
+     *    Kotlin 无需创建/释放任何全局引用（JS 侧只读、不释放 = owned=false）。
+     *  · rawPtr=false（async rpc fallback）：`{"__h":"0x<全局引用>","__c":…}`，句柄挂进 [refs]，
+     *    由调用方 finally 统一 delete（生命周期 = 本次回调，含所有 inner 往返）。
+     *  两条都失败 → `{"__o":"<simpleName>@<id>"}` 只读占位。
+     *
+     * @param refs 出参：本函数创建的全局引用句柄（只有 `__p` 不可用而回退 `__h` 时才有值）
+     */
+    private fun buildHookPayload(
+        chain: XposedInterface.Chain,
+        tag: String,
+        refs: MutableList<Long>,
+        rawPtr: Boolean,
+    ): String {
+        val ex = chain.executable
         val json = JSONObject()
         json.put("key", tag)
         val args = JSONArray()
-        val raw = chain.getArgs()
-        for (a in raw) args.put(encodeValue(a))
+        for (a in chain.getArgs()) args.put(encodeValue(a, refs, rawPtr))
         json.put("args", args)
         val thisObj = chain.getThisObject()
-        json.put("this", if (thisObj != null) encodeValue(thisObj) else JSONObject.NULL)
+        json.put("this", if (thisObj != null) encodeValue(thisObj, refs, rawPtr) else JSONObject.NULL)
+        // ret = JVM 描述符（adapter 用它判断返回值兼容性）；Constructor 无 returnType → "V"
+        json.put("ret", descriptorOf(returnTypeOf(ex)))
+        // isStatic 取**实际值**（反射 Modifier，不采信协议里的声明）：JS 侧要据此决定是否
+        // 把 this 当真实实例 wrapper 用；static 方法的 chain.getThisObject() 恒为 null。
+        json.put("isStatic", Modifier.isStatic(ex.modifiers))
         return json.toString()
     }
 
     /**
-     * 编码（Facts §5）：基础类型直 JSON；对象/数组 → {"__obj":"<simpleName>@<addr>"} 占位
-     * （B1 只读不解析；addr = System.identityHashCode 十六进制，进程内稳定）。
+     * 契约 §3.2 值编码：原始类型/字符串直入 JSON；char → 单字符串；long 超 2^53 → `__i64`
+     * 十进制字符串（JSON number 是 double，直接放会**静默丢精度**，而 Java long 是 64 位）；
+     * 对象/数组 → `__p`/`__h` 句柄；编码失败 → `__o` 占位。
+     *
+     * NaN/Infinity 不能进 JSON（org.json 对非法 double 直接抛 JSONException），仍按现状转字符串
+     * ——adapter 侧对"该位置出现字符串"要能容忍（否则会变成一次 CAST_FAIL）。
      */
-    private fun encodeValue(v: Any?): Any = when (v) {
+    private fun encodeValue(v: Any?, refs: MutableList<Long>, rawPtr: Boolean): Any = when (v) {
         null -> JSONObject.NULL
         is String -> v
         is Char -> v.toString()
         is Boolean -> v
         is Float -> if (v.isNaN() || v.isInfinite()) v.toString() else v
         is Double -> if (v.isNaN() || v.isInfinite()) v.toString() else v
-        is Number -> {
-            if (v is Long && (v > MAX_SAFE_LONG || v < -MAX_SAFE_LONG)) {
-                hostLog("[lsp-hook] LONG_PRECISION warn |v|>2^53 value=$v")
-            }
+        is Long -> if (v > MAX_SAFE_LONG || v < -MAX_SAFE_LONG) {
+            hostLog("[lsp-hook] LONG_PRECISION warn |v|>2^53 value=$v (__i64)")
+            JSONObject().put("__i64", v.toString())
+        } else {
             v
         }
-        else -> JSONObject().put(
-            "__obj",
-            "${v.javaClass.simpleName}@${Integer.toHexString(System.identityHashCode(v))}"
+        is Number -> v
+        else -> encodeObjectRef(v, refs, rawPtr)
+    }
+
+    /**
+     * 对象/数组 → `__p`（局部引用裸指针）/ `__h`（全局引用）/ `__o`（占位）三选一。
+     *
+     * 为何优先 `__p`：同步路径下 JS 与 Kotlin 在同一条 app 线程，jobject 局部引用天然有效，
+     * 交给 JS 直接包 wrapper 即可，**零生命周期管理**。`__h` 只在 ptrOf 不可用时兜底。
+     */
+    private fun encodeObjectRef(v: Any, refs: MutableList<Long>, rawPtr: Boolean): Any {
+        val clsName = v.javaClass.name
+        if (rawPtr) {
+            val p = try {
+                GumJsBridge.ptrOf(v)
+            } catch (t: Throwable) {
+                hostLog("[lsp-hook] PTR_FAIL cls=$clsName err=" + t.message)
+                0L
+            }
+            if (p != 0L) return JSONObject().put("__p", handleHex(p)).put("__c", clsName)
+            // ptrOf 不可用/失败 → 落到下面 __h 回退（防护性路径，不能丢参）
+        }
+        val h = try {
+            GumJsBridge.newGlobalRef(v)
+        } catch (t: Throwable) {
+            hostLog("[lsp-hook] GREF_FAIL cls=$clsName err=" + t.message)
+            0L
+        }
+        if (h != 0L) {
+            refs.add(h)
+            return JSONObject().put("__h", handleHex(h)).put("__c", clsName)
+        }
+        // 编码失败：只读占位（契约 §3.2）。**不抛**——一个参数编码失败不该让整次回调失败。
+        return JSONObject().put(
+            "__o",
+            v.javaClass.simpleName + "@" + Integer.toHexString(System.identityHashCode(v))
         )
     }
 
-    /** r 解码（Facts §5）：Number→按返回类型强转；Boolean→boolean；String→String/null；其它→fallback */
+    /**
+     * 回复值解码（契约 §3.2/§3.3）：Number→按返回类型强转；Boolean→boolean；String→String/null；
+     * `{"__h":…}` → 本线程局部引用；`{"__i64":…}` → long；其它 → [RET_FALLBACK]（调用方转默认值）。
+     */
     private fun decodeRet(retType: Class<*>, r: Any?): Any? {
         return when {
             r == null || r === JSONObject.NULL -> null
+            r is JSONObject -> decodeStructured(r, retType)
             // 下面同时比 Java 包装类与 Kotlin 原始类型（如 java.lang.Character vs Char）：
             // 反射拿到的 retType 对 char/int 等方法返回的是原始类型（Character.TYPE），
             // 而包装类场景返回 java.lang.Character —— 两者不等价，必须都查。
@@ -723,13 +1207,105 @@ class HookRouter(
                 (r as? Number)?.toFloat() ?: RET_FALLBACK
             retType == java.lang.Double::class.java || retType == Double::class.java ->
                 (r as? Number)?.toDouble() ?: RET_FALLBACK
-            else -> RET_FALLBACK   // 对象/数组返回：B1 不支持（透传原值）
+            else -> RET_FALLBACK   // 对象/数组返回：非句柄形态无法转换
         }
     }
 
-    /** 原方法结果编码（nativePostOriginalReply 回投载荷）——基础类型透传、对象 → 占位。 */
-    private fun encodeRet(v: Any?): String {
-        return JSONObject().put("__ret", encodeValue(v)).toString()
+    /**
+     * 结构化值解码：`__h`（JS 侧 wrapper.$h，可能是 global 或 local ref）→ 本线程局部引用；
+     * `__i64`（>2^53 的 long 十进制串）→ 按返回类型收窄。
+     *
+     * `__h` 的纪律（契约 §3.2）：newLocalRef 拿到局部引用后**立即** deleteGlobalRef。
+     * 局部引用独立持有对象（删全局引用不影响它）；不删则每次命中泄漏一个全局引用，
+     * 而 ART 的全局引用表很小（默认 512 项），泄漏几十次就足以让整个进程的 JNI 挂掉。
+     */
+    private fun decodeStructured(obj: JSONObject, retType: Class<*>): Any? {
+        val hRaw = obj.opt("__h")
+        if (hRaw is String && hRaw.isNotEmpty()) {
+            val h = parseHandle(hRaw)
+            if (h == 0L) return RET_FALLBACK
+            var local: Any? = null
+            try {
+                local = GumJsBridge.newLocalRef(h)
+            } catch (t: Throwable) {
+                hostLog("[lsp-hook] JS_REF_ERR handle=$hRaw err=" + t.message)
+            } finally {
+                runCatching { GumJsBridge.deleteGlobalRef(h) }
+            }
+            return local ?: RET_FALLBACK
+        }
+        val i64 = obj.opt("__i64")
+        if (i64 is String) {
+            val l = i64.toLongOrNull() ?: return RET_FALLBACK
+            return when {
+                retType == java.lang.Long::class.java || retType == Long::class.java -> l
+                retType == java.lang.Integer::class.java || retType == Int::class.java -> l.toInt()
+                retType == java.lang.Short::class.java || retType == Short::class.java -> l.toShort()
+                retType == java.lang.Byte::class.java || retType == Byte::class.java -> l.toByte()
+                retType == java.lang.Float::class.java || retType == Float::class.java -> l.toFloat()
+                retType == java.lang.Double::class.java || retType == Double::class.java -> l.toDouble()
+                else -> RET_FALLBACK
+            }
+        }
+        return RET_FALLBACK
+    }
+
+    /**
+     * 原方法结果回投（async 路径的 `nativePostOriginalReply` 载荷，`{"__ret":<E>}`）。
+     * 同步主路径没有这个往返（原方法结果由 JS 在同一线程里直接拿到）。
+     */
+    private fun encodeRet(v: Any?, refs: MutableList<Long>): String {
+        return JSONObject().put("__ret", encodeValue(v, refs, rawPtr = false)).toString()
+    }
+
+    /** `{"kind":"value","r":…}` 解码：r=null 且返回类型是原始类型 → 该类型默认值（否则拆箱 NPE）。 */
+    private fun decodeValueReply(retType: Class<*>, r: Any?, req: HookRequest): Any? {
+        if (retType == java.lang.Void.TYPE) return null   // void / 构造器：返回值被框架忽略
+        if (r == null || r === JSONObject.NULL) return defaultValueFor(retType)
+        val v = decodeRet(retType, r)
+        if (v === RET_FALLBACK) {
+            hostLog("[lsp-hook] CAST_FAIL tag=" + req.tag + " retType=" + retType.name + " r=" + r)
+            // 上游语义：返回值与返回类型不兼容 = Java 调用方拿默认值 + （JS 侧）nextTick 重抛；
+            // 原方法**不执行**。Kotlin 只能做到"给默认值"这一半。
+            return defaultValueFor(retType)
+        }
+        return v
+    }
+
+    /**
+     * 返回类型默认值（契约 §3.3）：原始类型取 0/false/'\u0000'，其它 null。
+     *
+     * 必须按**原始类型**判：反射对 `boolean m()` 给的是 Boolean.TYPE（不是 java.lang.Boolean），
+     * 若要给 null 会被框架拆箱成 NPE —— 这条路径恰恰是"JS 抛错/返回不兼容"的兜底，
+     * 一旦自己再抛就等于把异常甩回目标 App。
+     */
+    private fun defaultValueFor(t: Class<*>): Any? = if (!t.isPrimitive) {
+        null
+    } else {
+        when (t) {
+            java.lang.Boolean.TYPE -> false
+            java.lang.Character.TYPE -> '\u0000'
+            java.lang.Byte.TYPE -> 0.toByte()
+            java.lang.Short.TYPE -> 0.toShort()
+            java.lang.Integer.TYPE -> 0
+            java.lang.Long.TYPE -> 0L
+            java.lang.Float.TYPE -> 0f
+            java.lang.Double.TYPE -> 0.0
+            else -> null   // void：框架忽略返回值
+        }
+    }
+
+    /**
+     * 被 hook executable 的返回类型。**Constructor 没有 returnType**（Java 反射 API 如此），
+     * 而框架对构造器也忽略返回值 → 视为 void（"V"）。
+     */
+    private fun returnTypeOf(ex: Executable): Class<*> = (ex as? Method)?.returnType ?: Void.TYPE
+
+    /** 释放本回调创建的全局引用（sync / async 两条路径的 finally 都调；幂等、不抛）。 */
+    private fun releaseGlobalRefs(refs: MutableList<Long>) {
+        if (refs.isEmpty()) return
+        for (h in refs) runCatching { GumJsBridge.deleteGlobalRef(h) }
+        refs.clear()
     }
 
     private fun argsSummary(args: List<Any?>?): String {
@@ -743,13 +1319,17 @@ class HookRouter(
         }
     }
 
-    // ---- B2：overload sigs 归一化 / 内层参数解码 ----
+    // ---- overload sigs 归一化 / 内层参数解码 ----
 
-    /** 解析内层标记：{"__inner":true[, "args":[…]]} → args（无 args 字段/非数组 → null=原参回退） */
-    private fun parseInnerArgs(reply: String): JSONArray? {
+    /**
+     * 解析 async 路径的内层请求：`{"kind":"inner","args":[…]|null}`。
+     * args 缺失/JSON null = 原参回退；给了数组就按 parameterTypes 转换（转换失败也回退原参）。
+     */
+    private fun parseInner(reply: String): JSONObject? {
+        if (reply.isEmpty()) return null
         return try {
             val json = JSONObject(reply)
-            if (!json.optBoolean("__inner")) null else json.optJSONArray("args")
+            if (strField(json, "kind") == "inner") json else null
         } catch (_: Throwable) {
             null
         }
@@ -762,9 +1342,23 @@ class HookRouter(
         for (i in types.indices) {
             val v = decodeRet(types[i], arr.opt(i))
             if (v === RET_FALLBACK) return null
+            // 原始类型形参不能传 null：proceed(null) 会在框架里拆箱抛 NPE（异常会甩给目标 App），
+            // 因此宁可整组回退"原参"——那也是 this.foo() 的语义基线。
+            if (v == null && types[i].isPrimitive) return null
             out[i] = v
         }
         return out
+    }
+
+    /**
+     * 按 sigs 过滤候选 executable（契约 §2.1：sigs 是该 overload 的**参数类型 className 列表**）。
+     * sigs=null → 不过滤（legacy 路径"挂全部"）；空列表 → 精确匹配"无参 overload"，
+     * 二者语义不同不能合并（空数组合并成 null 会把 `Foo()` 挂成"全部重载"）。
+     */
+    private fun filterBySigs(list: List<Executable>, sigs: List<String>?): List<Executable> {
+        if (sigs == null) return list
+        val want = sigs.map { normalizeSig(it) }
+        return list.filter { ex -> ex.parameterTypes.map { descriptorOf(it) } == want }
     }
 
     /** Java 类型 → JVM 描述符（数组递归） */
@@ -786,11 +1380,20 @@ class HookRouter(
         else -> "L" + c.name.replace('.', '/') + ";"
     }
 
-    /** JS 侧 sig 归一化（'I'/'int'/'java.lang.String'/'int[]'/'[I' 等形态 → JVM 描述符） */
+    /**
+     * JS 侧 sig 归一化（'I'/'int'/'java.lang.String'/'int[]'/'[I'/'[Ljava.lang.String;' 等形态
+     * → JVM 描述符）。
+     *
+     * 两处修正（REPORT §1.4 的已知缺陷）：
+     *  ① 数组形态原来遇到 `[` 直接原样返回 → `"[Ljava.lang.String;"`（点号）与
+     *     `descriptorOf` 的 `"[Ljava/lang/String;"`（斜杠）永不相等，表现为必 MISS_OVERLOAD；
+     *     现在递归归一化数组元素。
+     *  ② `L…;` 形态原来也原样返回（点号同样不归一），现在同样把内部点号换成斜杠。
+     */
     private fun normalizeSig(s: String): String {
         val t = s.trim()
         if (t.endsWith("[]")) return "[" + normalizeSig(t.substring(0, t.length - 2))
-        if (t.startsWith("[") && t.length > 1) return t   // 已描述符形态
+        if (t.startsWith("[") && t.length > 1) return "[" + normalizeSig(t.substring(1))
         return when (t) {
             "I", "int" -> "I"
             "J", "long" -> "J"
@@ -801,7 +1404,15 @@ class HookRouter(
             "S", "short" -> "S"
             "C", "char" -> "C"
             "V", "void" -> "V"
-            else -> if (t.startsWith("L") && t.endsWith(";")) t else "L" + t.replace('.', '/') + ";"
+            else -> {
+                // "L…;" 已是描述符外壳，只需归一内部点号；裸类名补外壳
+                val body = if (t.length > 2 && t.startsWith("L") && t.endsWith(";")) {
+                    t.substring(1, t.length - 1)
+                } else {
+                    t
+                }
+                "L" + body.replace('.', '/') + ";"
+            }
         }
     }
 

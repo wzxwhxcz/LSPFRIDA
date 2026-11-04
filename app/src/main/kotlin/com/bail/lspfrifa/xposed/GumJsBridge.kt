@@ -6,8 +6,28 @@ package com.bail.lspfrifa.xposed
  *
  * 使用方式：
  *   GumJsBridge.init()
- *   GumJsBridge.setMessageCallback(...)
+ *   GumJsBridge.setSyncHandler { json -> router.handleBridgeSync(json) }   // 必须在 loadScript 之前
+ *   GumJsBridge.registerMessageCallback(...)
  *   val ok = GumJsBridge.loadScript("console.log('hello')", "demo")
+ *
+ * ## 第一阶段（frida-java-bridge 7.0.13 接通）后的形态
+ *
+ * 注入顺序：`LSP_SHIM_BASE`（官方 send 通道，LSP.hook/toast/unhookAll）→ `LSP_SHIM_COMPAT`
+ * （queueMicrotask 补齐，非 Java 语义）→ `JavaBridgeBundle`（上游 7.0.13 真 bundle，含 adapter）
+ * → 用户脚本。**不再有 LSP_SHIM_JAVA**：`globalThis.Java` 就是上游 Runtime 实例，
+ * `perform` / `use` / `overload` / `implementation` / `choose` / `cast` / `factory.loader` 等
+ * 全部走上游实现；旧 shim 的 340 行兼容子集（19 stub / 4 trap / androidVersion token）已删除。
+ *
+ * 跨语言契约见 `tools/javabridge/BRIDGE-CONTRACT.md`：
+ *  - 上行（JS → Kotlin）：adapter 在 `implementation = fn|null` 时经 cpp `lsp_sync_call`
+ *    同步调用本类 `lspSync(String): String`（@JvmStatic，cpp 用 GetStaticMethodID 取），
+ *    由 [setSyncHandler] 注入的 handler（HookRouter.handleBridgeSync）同步返回路由结果；
+ *  - 下行（Kotlin → JS）：adapter 在 bundle 装载期把 NativeCallback 函数指针经
+ *    `{"op":"set_dispatcher"}` 报给 [setDispatcher]；hook 命中时 Kotlin 调 [dispatchHook]，
+ *    cpp 在**同一条 app 线程**上同步执行 JS 并回传 reply JSON（无 rpc 往返、无超时）。
+ *
+ * 旧 RouteB 通道（[callJs] / [postOriginalReply]，Kotlin→JS 异步 rpc + 500ms 泵等待）
+ * 保留为 dispatcher 缺失/失败时的兜底，不得删除。
  */
 object GumJsBridge {
 
@@ -37,6 +57,21 @@ object GumJsBridge {
     var initialized: Boolean = false
         private set
 
+    /**
+     * 同步安装通道 handler（契约 §2）：cpp `lsp_sync_call` → [lspSync] → 这里。
+     * 由 LSPFRIFAModule 在 **loadScript 之前**注入（`HookRouter.handleBridgeSync`）。
+     */
+    @Volatile
+    private var syncHandler: ((String) -> String)? = null
+
+    /**
+     * JS 侧 dispatcher 是否已注册。cpp 的 nativeLoadScript 会在装载前把 g_js_dispatcher
+     * 置空，本字段与之同步：loadScript/unloadScript 先置 false，adapter 在 bundle 装载期
+     * 经 `set_dispatcher` 再置 true。
+     */
+    @Volatile
+    private var dispatcherReady: Boolean = false
+
     private var loaded: Boolean = false
 
     init {
@@ -54,54 +89,204 @@ object GumJsBridge {
         return initialized
     }
 
+    // ==================== 上行：JS → Kotlin 同步通道（契约 §2） ====================
+
+    /**
+     * 注入同步 handler（HookRouter.handleBridgeSync）。传 null = 解除。
+     *
+     * 时序要求：必须在第一次 [loadScript] 之前调用——上游 bundle 的 adapter 在**装载期**
+     * 就调用 `set_dispatcher`，晚一步注册会让首轮 `implementation` 赋值拿不到同步反馈。
+     * 模块侧重复注册是安全的（后注册覆盖前者；early/app 两阶段捕获同一 router 实例）。
+     */
+    fun setSyncHandler(handler: ((String) -> String)?) {
+        syncHandler = handler
+    }
+
+    /**
+     * cpp `lsp_sync_call` 的目标方法（契约 §1.2：`static java.lang.String lspSync(java.lang.String)`）。
+     *
+     * 纪律：**永不抛**。调用方是 GumJS 的 JS 线程，异常逃到 JNI 边界会让整个目标进程不可用；
+     * 最外层 catch Throwable，连 Error 族一起转成合法失败 JSON（JS 侧据 ok:false 同步 throw）。
+     * 这里只做转发与兜底，协议处理全在 HookRouter（单一职责，便于测试）。
+     */
+    @JvmStatic
+    fun lspSync(payload: String): String {
+        val handler = syncHandler
+            ?: return "{\"ok\":false,\"err\":\"sync handler not registered\",\"kind\":\"badreq\"}"
+        return try {
+            handler(payload)
+        } catch (t: Throwable) {
+            val msg = (t.message ?: t.javaClass.simpleName)
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+            "{\"ok\":false,\"err\":\"lspSync crashed: " + msg + "\",\"kind\":\"badreq\"}"
+        }
+    }
+
+    // ==================== 下行：Kotlin → JS 同步 dispatcher（契约 §3） ====================
+
+    /**
+     * 注册/清除 JS dispatcher 函数指针（ptr == 0 → 清除）。
+     * 由 HookRouter.setDispatcherSync 在收到 adapter 的 `{"op":"set_dispatcher"}` 时调用；
+     * 卸载脚本时由本类主动传 0 作废（JS 对象随脚本卸载失效，绝不能再回调）。
+     */
+    fun setDispatcher(ptr: Long) {
+        dispatcherReady = ptr != 0L
+        try {
+            nativeSetDispatcher(ptr)
+        } catch (_: Throwable) {
+            dispatcherReady = false
+        }
+    }
+
+    /** dispatcher 是否可用（HookRouter 据此选择同步主路径 / 旧 async 兜底路径）。 */
+    fun hasDispatcher(): Boolean = dispatcherReady
+
+    /**
+     * 同线程同步执行 JS hook 回调：payload 为契约 §3.1 JSON，返回 reply JSON。
+     *
+     * 返回 null 的**唯一**含义 = dispatcher 未注册 / cpp 没进 JS（adapter 内部任何异常都会
+     * 兜成合法 JSON，不会返回 null）。调用方据此退回旧 async 路径，不会二次执行用户 fn。
+     * 纪律：不持 Kotlin 锁（JS 回调内可能经 JNI 回到 HookRouter/LSPlant）。
+     */
+    fun dispatchHook(payload: String): String? {
+        if (!dispatcherReady) return null
+        return try {
+            nativeDispatchHook(payload)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    // ==================== 引用搬运（契约 §3.2 <E> 编码） ====================
+
+    /** 局部引用 → 全局引用句柄；null/失败 → 0。 */
+    fun newGlobalRef(obj: Any?): Long {
+        if (obj == null) return 0L
+        return try {
+            nativeNewGlobalRef(obj)
+        } catch (_: Throwable) {
+            0L
+        }
+    }
+
+    /** 全局引用句柄 → 局部引用；0 → null。 */
+    fun newLocalRef(handle: Long): Any? {
+        if (handle == 0L) return null
+        return try {
+            nativeNewLocalRef(handle)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** 删除全局引用句柄；0 → 静默。 */
+    fun deleteGlobalRef(handle: Long) {
+        if (handle == 0L) return
+        try {
+            nativeDeleteGlobalRef(handle)
+        } catch (_: Throwable) {
+            // 引用已失效时 JNI 会抛；不影响业务路径
+        }
+    }
+
+    /** jobject 裸指针（jlong）。仅用于**同线程、回调生命周期内**传给 JS 临时包 wrapper。 */
+    fun ptrOf(obj: Any?): Long {
+        if (obj == null) return 0L
+        return try {
+            nativePtrOf(obj)
+        } catch (_: Throwable) {
+            0L
+        }
+    }
+
+    // ==================== 脚本装载 ====================
+
     @Synchronized
     fun loadScript(scriptContent: String, scriptName: String = "main"): Boolean {
         if (!init()) return false
+        val bundle = JavaBridgeBundle.SCRIPT
+        if (bundle.isBlank()) {
+            // bundle 是生成的（tools/javabridge/build.mjs）。空 = 生成流程坏了，
+            // 此时放行只会得到"Java.* 全不存在"的静默降级，不如明确失败。
+            android.util.Log.e(
+                "LSPFRIFA-GumJS",
+                "JAVA_BRIDGE_BUNDLE_EMPTY: JavaBridgeBundle.SCRIPT 为空，拒绝加载（Java.* 不可用）",
+            )
+            return false
+        }
+        // cpp nativeLoadScript 会在装载前把 JS dispatcher 置空；Kotlin 视图同步作废，
+        // 待 bundle 内 adapter 的 set_dispatcher 上报后重新置 true。
+        dispatcherReady = false
         loaded = try {
-            // 注入顺序（cap 裁定 2026-08-25）：
-            //   ① LSP shim 基础段（最前，仅依赖内建 send）
-            //   ② frida-java-bridge bundle（globalThis.Java，保留兼容——其其它 API 经尾段合并保留）
-            //   ③ B1 Java 尾段：globalThis.Java = Object.assign(Object.create(null), bundleJava, ourJava)
-            //      （ourJava 的 use/perform 覆盖同名；无 bundle 时直接 ourJava）
-            //   ④ 用户脚本
-            // 官方通道：LSP.hook() 与 Java.use(...).implementation 的 hook 注册均经 on_message
-            // 上行到 HookRouter → libxposed hook()（LSPlant 引擎），彻底绕开 frida-java-bridge
-            // 在 A15/ART35 的 ArtMethod entry 替换脆弱性。
             val combined = buildString {
                 append(LSP_SHIM_BASE)
                 append("\n;\n")
-                if (JavaBridgeBundle.SCRIPT.isNotBlank()) {
-                    append(JavaBridgeBundle.SCRIPT)
-                    append("\n;\n")
-                }
-                // A1（2026-10-07）：token 命中自检。
-                // 背景：token 与 shim 内字面量**均带引号**（见下方 LSP_ANDROID_VERSION_TOKEN 定义），
-                //   故 replace 未命中时**不抛错**，只会让 Java.androidVersion 静默变成占位字符串。
-                //   触发场景：改注释/动 raw string/编辑器转义导致 token 拼写漂移。
-                // 处置：**只 Log 不抛** —— loadScript 外层 catch{false} 会把异常转为"引擎全废"，
-                //   比"版本号错值"更糟（静默错值至少引擎可用）。
-                val shimJava = LSP_SHIM_JAVA.replace(LSP_ANDROID_VERSION_TOKEN, lspAndroidVersionLiteral())
-                if (shimJava == LSP_SHIM_JAVA) {
-                    android.util.Log.e(
-                        "LSPFRIFA-GumJS",
-                        "SHIM_TOKEN_MISS token=" + LSP_ANDROID_VERSION_TOKEN +
-                            " → Java.androidVersion 将返回占位字符串（引擎继续加载）",
-                    )
-                }
-                append(shimJava)
+                append(LSP_SHIM_COMPAT)
+                append("\n;\n")
+                append(bundle)
                 append("\n;\n")
                 append(scriptContent)
             }
             nativeLoadScript(combined, scriptName)
         } catch (t: Throwable) {
+            android.util.Log.e("LSPFRIFA-GumJS", "loadScript failed: " + t.message)
             false
         }
         return loaded
     }
 
+    @Synchronized
+    fun unloadScript() {
+        if (loaded) {
+            // JS 侧对象（含 dispatcher NativeCallback）随脚本卸载失效：先作废 dispatcher，
+            // 否则卸载后若仍有 LSPlant hook 命中，cpp 会回调已释放的函数指针。
+            setDispatcher(0L)
+            try {
+                nativeUnloadScript()
+            } catch (_: Throwable) {
+            }
+            loaded = false
+        }
+        dispatcherReady = false
+    }
+
+    // ==================== 旧 RouteB 通道（async 兜底，保留） ====================
+
     /**
-     * JS 侧官方通道 shim【基础段】（最前注入，与 B1 前行为完全一致、零改动）：
+     * RouteB B1 替换通道（async 兜底路径，仅在 dispatcher 未注册/失败时使用）：
+     * intercept 线程 → 登记请求（id）→ gum_script_post(frida:rpc call) → 条件变量等待（≤500ms）。
+     * 返回 `{"over":bool,"r":…}` / `{"__inner":true}`；超时/异常 → ""（调用方 proceed 兜底）。
+     * 同线程重入时 cpp 直接回 `{"__reentrant":true}`（Kotlin 走 proceed，不吃 500ms 超时）。
+     */
+    fun callJs(id: String, payload: String): String = try {
+        nativeCallJs(id, payload)
+    } catch (_: Throwable) {
+        ""
+    }
+
+    /** RouteB：原方法结果回投 JS（async fn 内 this.method 的 resolve；fire-and-forget）。 */
+    fun postOriginalReply(id: String, retJson: String) {
+        try {
+            nativePostOriginalReply(id, retJson)
+        } catch (_: Throwable) {
+            // native 未就绪时忽略（回退超时路径）
+        }
+    }
+
+    /** C 层旧回调入口（保留；当前 on_message 直接调 OnScriptMessage.onScriptMessage） */
+    @JvmStatic
+    fun dispatchMessage(message: String) {
+        _messageCallback?.onScriptMessage(message)
+    }
+
+    // ==================== JS 侧 shim（仅官方通道 + 兼容补齐） ====================
+
+    /**
+     * JS 侧官方通道 shim【基础段】（最前注入）：
      * LSP.hook(cls, method, tag, act) / LSP.toast(msg) / LSP.unhookAll() → GumJS send → Kotlin HookRouter。
+     *
+     * 这是 LSPFRIDA 相对上游的形态优势（LSPlant 路由），**不属于** Java API 兼容层，故保留。
      */
     private val LSP_SHIM_BASE: String = """
         globalThis.LSP = globalThis.LSP || Object.create(null);
@@ -137,364 +322,25 @@ object GumJsBridge {
     """.trimIndent()
 
     /**
-     * RouteB B1 Java 代理段（注入尾序：bundle 之后、用户脚本之前）。契约=cap 冻结 2026-08-25：
-     * - 用户 API：`Java.perform(fn)`=直接执行 fn()（无 VM attach 依赖，可多段）；
-     *   `Java.use(cls)`=ClassWrapper（per-cls 缓存、不预查类——MISS 由 HookRouter 注册时路由）；
-     *   `clazz.method.implementation = fn|null`（fn 返回 undefined=观察语义自动 proceed；
-     *   非 undefined=替换返回；null=移除；重复赋值=重注册）；
-     *   tag 约定=`<cls>#<method>`（overload 精确选择时为 `<cls>#<method>#<sigs 逗号串>`）；
-     *   `clazz.method.overload('I','java.lang.String').implementation = fn|null`（B2 精确选择；
-     *   缺省不调 overload()=挂全部 overload，现状零改动）；
-     * - 回复通道：`rpc.exports.__lspHookReply(id, argsJson)` 返回 `JSON.stringify({over,r})`（async fn
-     *   返回 Promise 亦支持——dispatcher 等待后 reply）；其余由 message-dispatcher 自动发标准 frida:rpc
-     *   reply（`["frida:rpc",id,"ok",value]`）；抛异常 → 自动 error reply → cpp 按超时兜底 proceed。
-     * - this 桥（t9+B2，cap 裁定更新：不再抛错）：`this.<method>(...)`（仅 ClassWrapper 已物化方法名，
-     *   判定=__lspClassMeta[cls].methods）→ send `{t:"lsp.rpc_inner", id:当前rpc id, args:[自定义参数]}`（B2：
-     *   参数编码后上行；空数组=未提供 → Kotlin 安全回退原参）+ 返回 Promise；
-     *   原方法结果经 `rpc.exports.__lspHookOriginalReply(X, retJson)` 回投 resolve（per-id FIFO）；
-     *   其它属性访问/赋值仍抛可读 Error。
-     * - argsJson 契约（Kotlin 侧构建，t7 对齐）：`{"key":"<cls>#<method>","args":[...],"this":{...}|null}`；
-     *   args 编码=Facts §5：基础类型直 JSON，对象/数组 → `{"__obj":"<simpleName>@<addr>"}` 占位（原样透传）。
-     * - 第十轮（参考官方成员名单逐项裁决）：`performNow`=同 perform（同步直执）；
-     *   `isMainThread`=常量 false（JS 恒在 gum-js-loop 线程）；`androidVersion`=装配时注入
-     *   Build.VERSION.RELEASE；深度 VM API（choose / cast / retain / 枚举 / deoptimize 系列 /
-     *   synchronized / scheduleOnMainThread）统一为**可读错误 stub**（防静默 undefined，见日志教训）；
-     *   bundle 实例内部状态字段（ClassFactory/classFactory/vm/api）同步中和（链式访问亦得可读错误）。
+     * 非 Java 语义的运行时兼容补齐（与 Java 桥无关，独立保留）。
+     *
+     * queueMicrotask 是真实缺口（2026-10-05 实核）：QuickJS 内核与 frida runtime 都**未定义**它
+     * （frida runtime 源码 grep 零命中），而它已进入现代脚本常用 API。若用户脚本顶层调用 →
+     * ReferenceError → **整个脚本终止**（含后续 timer 注册），症状极易误诊为"timer 不触发"。
+     * Promise.resolve().then() 就是标准微任务排队语义（QuickJS 原生 Promise）。
      */
-    private val LSP_SHIM_JAVA: String = """
+    private val LSP_SHIM_COMPAT: String = """
         (function () {
-          var __lspClassCache = Object.create(null);
-          var __lspUserFns = Object.create(null);   // key=cls#method -> fn（intercept 查表入口）
-          var __lspRegistered = Object.create(null); // key -> true（曾注册；重复赋值先发 unhook）
-
-          function __lspErr(msg) { return new Error("[lsp] " + msg); }
-          function __lspKey(cls, method) { return cls + "#" + method; }
-          function __lspUnsupported(what) {
-            return __lspErr("unsupported: " + what + "（本模块为 LSPlant 路由架构，仅提供 use/perform/performNow/available/isMainThread/androidVersion 子集）");
-          }
-
-          // ---- t9+B2：async this.method 桥（cap 裁定更新：不再抛错，统一 await 桥；B2 支持自定义参数）----
-          // this.<method>(...)（仅 ClassWrapper 上已物化过的方法名）→ send({t:"lsp.rpc_inner", id:<当前rpc id>,
-          //   args:[...]})（args 为 B2 新增：自定义参数编码；空数组=未提供）→ 返回 Promise；
-          // 原方法结果经 __lspHookOriginalReply(同 id) 回投 resolve。
-          // 字段契约（t15）：JS 上行 {t:"lsp.rpc_inner", id:X, args:数组|null}（GumJS send 自动包 {type:"send",payload}）；
-          // C→JS：["frida:rpc", origId, "call", ["__lspHookOriginalReply", [X, retJson]]]。
-          var __lspInnerPending = Object.create(null); // id -> [{resolve,reject}]（FIFO：Kotlin 串行服务，回复按序）
-          var __lspClassMeta = Object.create(null);    // cls -> {methods}（已物化方法名集合，this 代理判定源）
-
-          // B2 参数编码（与 Kotlin encodeValue 同构的子集）：基础类型直 JSON；数组递归；占位/其它对象 → 占位
-          function __lspEncodeArg(v) {
-            if (v === null || v === undefined) { return null; }
-            var t = typeof v;
-            if (t === "number" || t === "string" || t === "boolean") { return v; }
-            if (t === "object") {
-              if (Array.isArray(v)) { return v.map(__lspEncodeArg); }
-              if (v.__obj !== undefined) { return v; }   // Kotlin 侧占位透传
-              return { __obj: "Object@js" };             // 其它对象 → 占位（Kotlin CAST_FAIL → 安全回退原参）
-            }
-            return { __obj: "Function@js" };
-          }
-          function __lspEncodeArgs(list) { return list.map(__lspEncodeArg); }
-
-          function __lspInnerBridge(rpcId, method) {
-            return function () {
-              var args = Array.prototype.slice.call(arguments, 0);
-              var q = __lspInnerPending[rpcId] || (__lspInnerPending[rpcId] = []);
-              return new Promise(function (resolve, reject) {
-                var item = { resolve: resolve, reject: reject };
-                q.push(item);
-                try {
-                  // B2：args 随消息上行（空数组=未提供参数 → Kotlin 安全回退原参）
-                  send({ t: "lsp.rpc_inner", id: rpcId, args: __lspEncodeArgs(args) });
-                } catch (e) {
-                  var i = q.indexOf(item);
-                  if (i >= 0) { q.splice(i, 1); }
-                  reject(e);
-                }
-              });
-            };
-          }
-
-          // this 占位（B1 v2）：方法名（ClassWrapper 已物化）→ await 桥；其它属性访问/赋值 → 可读错误。
-          function __lspThisPlaceholder(key, rpcId) {
-            var cls = String(key).split("#")[0];
-            var meta = __lspClassMeta[cls];
-            return new Proxy(Object.create(null), {
-              get: function (t, k) {
-                if (typeof k !== "string") { return undefined; }
-                if (meta && meta.methods[k]) {
-                  return __lspInnerBridge(rpcId, k);
-                }
-                throw new Error("RouteB B1 暂不支持 this." + String(k) + "（非 ClassWrapper 方法名）：请改用返回值或参数处理");
-              },
-              set: function () {
-                throw new Error("RouteB B1 暂不支持 this 属性赋值：请改用返回值或参数处理");
-              }
-            });
-          }
-
-          // 宿主（cpp → frida:rpc）唯一回调：message-dispatcher 调本函数并自动回复其返回值。
-          // rpc 由运行时 core.js/message-dispatcher 提供（Facts §3 实核）；未提供时仅替换通道退化，
-          // 其余 shim 能力正常（Java.use 注册/观察语义经 send 照常上行）。
-          if (typeof rpc !== "undefined" && rpc.exports) {
-            rpc.exports.__lspHookReply = function (id, argsJson) {
-              var req = JSON.parse(argsJson);
-              var fn = __lspUserFns[req.key];
-              if (typeof fn !== "function") {
-                return JSON.stringify({ over: false, r: null });
-              }
-              var r = fn.apply(__lspThisPlaceholder(req.key, id), req.args || []);
-              if (r && typeof r.then === "function") {
-                // async fn：返回 Promise → dispatcher 支持 then/catch 后自动 reply（Facts §3）
-                return r.then(function (v) {
-                  if (v === undefined) { return JSON.stringify({ over: false, r: null }); }
-                  return JSON.stringify({ over: true, r: v });
-                }, function (e) { throw e; });
-              }
-              if (r === undefined) {
-                return JSON.stringify({ over: false, r: null }); // 观察语义：自动 proceed
-              }
-              return JSON.stringify({ over: true, r: r });        // 替换语义：跳过原方法
-            };
-            // 原方法结果回投（X 与 rpc_inner 上行同源；per-id FIFO 取首个挂起 Promise resolve）
-            // B2：解包 __ret——用户 `return this.bar(a)` 应拿到原始结果而非 {"__ret":...} 包装
-            rpc.exports.__lspHookOriginalReply = function (X, retJson) {
-              var key = String(X);
-              var q = __lspInnerPending[key];
-              if (!q || q.length === 0) { return undefined; } // 未命中：静默防泄漏（cpp 已兜底）
-              var item = q.shift();
-              var w;
-              try {
-                w = JSON.parse(retJson);
-              } catch (e) {
-                item.reject(e);
-                if (q.length === 0) { delete __lspInnerPending[key]; }
-                return undefined;
-              }
-              try {
-                item.resolve((w && w.__ret !== undefined) ? w.__ret : w);
-              } catch (e) {
-                item.reject(e);
-              }
-              if (q.length === 0) { delete __lspInnerPending[key]; }
-              return undefined; // 自动 reply（undefined）由 cpp 静默消费
-            };
-          } else {
-            console.log("[lsp] WARN: rpc global 不可用，替换通道降级为观察语义");
-          }
-
-          // B2：MethodWrapper 增加 overload(...sigs) 精确选择（缺省=挂全部，现状零改动）。
-          // selKey = <cls>#<method>#<sigs 逗号串>（Kotlin 侧 tag）；lsp.hook 携带 sigs 数组供过滤。
-          function __lspMethodWrapper(cls, method) {
-            var key = __lspKey(cls, method);
-            var impl;
-            var w = Object.create(null);
-
-            function __lspApply(selKey, sigs, v) {
-              if (v === null) {
-                if (__lspRegistered[selKey]) {
-                  delete __lspRegistered[selKey];
-                  delete __lspUserFns[selKey];
-                  try { send({ t: "lsp.unhook", cls: cls, method: method, tag: selKey }); } catch (e) {}
-                }
-                return;
-              }
-              if (typeof v !== "function") { throw __lspErr("implementation 必须是函数或 null"); }
-              __lspUserFns[selKey] = v;
-              if (__lspRegistered[selKey]) {
-                // 重复赋值=重注册：先卸旧 handle（Kotlin 侧按 key 幂等 + 重挂即生效）
-                try { send({ t: "lsp.unhook", cls: cls, method: method, tag: selKey }); } catch (e) {}
-              }
-              __lspRegistered[selKey] = true;
-              try {
-                var msg = { t: "lsp.hook", cls: cls, method: method, tag: selKey, act: "", mode: "replace" };
-                if (sigs !== null) { msg.sigs = sigs; }
-                send(msg);
-              } catch (e) {
-                console.log("[lsp] hook send failed: " + e);
-              }
-            }
-
-            Object.defineProperty(w, "implementation", {
-              configurable: true, enumerable: true,
-              get: function () { return impl; },
-              set: function (v) {
-                impl = (v === null ? undefined : v);
-                __lspApply(key, null, v);
-              }
-            });
-            Object.defineProperty(w, "overload", {
-              configurable: true, enumerable: true,
-              value: function () {
-                var sigs = Array.prototype.slice.call(arguments, 0).map(String);
-                if (sigs.length === 0) { throw __lspErr("overload 需要至少一个类型参数（如 'I'/'java.lang.String'）"); }
-                var selKey = key + "#" + sigs.join(",");
-                var sel = Object.create(null);
-                Object.defineProperty(sel, "implementation", {
-                  configurable: true, enumerable: true,
-                  get: function () { return __lspUserFns[selKey]; },
-                  set: function (v) { __lspApply(selKey, sigs, v); }
-                });
-                return sel;
-              }
-            });
-            return w;
-          }
-
-          function __lspClassWrapper(cls) {
-            var cached = __lspClassCache[cls];
-            if (cached) { return cached; }
-            var methods = Object.create(null);
-            var w = new Proxy(Object.create(null), {
-              get: function (t, k) {
-                if (typeof k !== "string") { return undefined; }
-                if (k === "${'$'}new" || k === "${'$'}className" || k === "value" || k === "constructor") {
-                  throw __lspUnsupported(k);
-                }
-                if (k in methods) { return methods[k]; }
-                var mw = __lspMethodWrapper(cls, k);
-                methods[k] = mw;
-                return mw;
-              },
-              set: function (t, k, v) {
-                throw __lspUnsupported("类字段 " + String(k) + " 赋值");
-              }
-            });
-            __lspClassMeta[cls] = { methods: methods }; // this 代理方法名判定源（同 ClassWrapper 缓存）
-            __lspClassCache[cls] = w;
-            return w;
-          }
-
-          var ourJava = Object.create(null);
-          ourJava.perform = function (fn) {
-            if (typeof fn !== "function") { throw __lspErr("Java.perform 需要函数参数"); }
-            return fn();
-          };
-          ourJava.use = function (cls) {
-            if (typeof cls !== "string" || cls.length === 0) { throw __lspErr("Java.use 需要类名字符串"); }
-            return __lspClassWrapper(cls);
-          };
-          // Java.available：标准 frida 能力探针（脚本常以 `if (!Java.available) return;` 早退）。
-          // 修复动机（真机实测）：此前 available 为 undefined —— Object.assign 不复制原型上的
-          // getter（bundle 的 available 定义在 Runtime 原型上）→ 探针恒为 falsy →
-          // **所有**依赖该探针的 Java 路径被整体跳过（实测日志 “Java unavailable, cannot
-          // schedule GL ...”，即使脚本只用 use/perform —— 本 shim 完全支持的子集）。
-          // 本模块是 LSPosed 模块，目标进程必有 JVM，且 hook 注册链（use/perform/implementation）
-          // 可用 → 常量 true。注意：这**不**让 bundle 深度 API（choose/registerClass 等）变为可用：
-          // 它们被下方 stub 替换为可读错误（choose / registerClass 等），
-          // 脚本调用时会得到可读失败而非被 available 探针静默跳过。
-          ourJava.available = true;
-          // ---- 第十轮（参考官方 Runtime 原型成员名单补齐；根因=Object.assign 不复制原型成员）----
-          // Java.performNow：官方语义=立即执行、不做延迟排队；本架构 perform 自身即同步直执 → 等价。
-          ourJava.performNow = function (fn) {
-            if (typeof fn !== "function") { throw __lspErr("Java.performNow 需要函数参数"); }
-            return fn();
-          };
-          // Java.isMainThread：官方经 Looper 判定；本架构所有 JS 恒在 gum-js-loop 线程执行
-          // （hook 回调经 frida:rpc 投递到 JS 线程），永不位于 Android 主线程 → 常量 false（保守方向）。
-          ourJava.isMainThread = function () { return false; };
-          // Java.androidVersion：官方为原型 getter（如 "15"）；本架构由 Kotlin 装配时注入
-          // Build.VERSION.RELEASE 真实值（占位符见常量 LSP_ANDROID_VERSION_TOKEN）。
-          ourJava.androidVersion = "__LSP_ANDROID_VERSION__";
-
-          // queueMicrotask 兼容补齐（真实缺口，2026-10-05 实核）：
-          // QuickJS 内核与 frida runtime 都**未定义** queueMicrotask（grep runtime/*.js 零命中），
-          // 而它已进入现代脚本常用 API。若用户脚本顶层调用它 → ReferenceError →
-          // **整个脚本终止**（含后续 timer 注册），与历史“timer 不触发”误诊的症状完全一致。
-          // 实现：Promise.resolve().then() 就是标准的微任务排队语义（QuickJS 原生 Promise）。
           if (typeof globalThis.queueMicrotask !== "function") {
             globalThis.queueMicrotask = function (fn) {
               if (typeof fn !== "function") { throw new TypeError("queueMicrotask 需要函数参数"); }
               return Promise.resolve().then(fn);
             };
           }
-
-          // 归属合并（cap 裁定）：use/perform 覆盖同名；bundle 其它 API 保留兼容；无 bundle 时直接 ourJava
-          var bundleJava = (typeof globalThis.Java === "object" && globalThis.Java !== null) ? globalThis.Java : null;
-          var merged = Object.assign(Object.create(null), bundleJava, ourJava);
-          // 参考官方 Runtime 完整原型成员名单逐项裁决（第十轮）：
-          //   已实现：perform / performNow / use / available / isMainThread / androidVersion
-          //   其余需真 VM 对象模型或 VM 枚举能力 → 统一"可读错误 stub"（绝不静默 undefined）
-          var __lspStubMembers = ["choose", "register", "registerClass", "openClassFile", "array", "type",
-            "cast", "retain", "backtrace", "enumerateLoadedClasses", "enumerateLoadedClassesSync",
-            "enumerateClassLoaders", "enumerateClassLoadersSync", "enumerateMethods",
-            "deoptimizeEverything", "deoptimizeBootImage", "deoptimizeMethod",
-            "scheduleOnMainThread", "synchronized"];
-          __lspStubMembers.forEach(function (name) {
-            if (!(name in merged)) {
-              Object.defineProperty(merged, name, {
-                configurable: true, enumerable: true,
-                value: function () { throw __lspUnsupported("Java." + name); }
-              });
-            }
-          });
-          // 合并从 bundle 实例复制的是【自有字段】（classFactory/vm/api/ClassFactory —— 均为内部状态，
-          // 非 API；官方 API 全在类体/原型上）。这些半初始化字段泄漏会产生迷惑性 TypeError
-          // （如 Cannot read property 'use' of null）——统一中和为可读错误：直接调用、或经常见
-          // 链式访问（.use/.get/.perform/.performNow）都得同一指引；属性枚举不抛（Introspection-safe）。
-          function __lspTrap(what) {
-            var f = function () { throw __lspUnsupported(what); };
-            ["use", "get", "perform", "performNow"].forEach(function (k) { f[k] = f; });
-            return f;
-          }
-          ["ClassFactory", "classFactory", "vm", "api"].forEach(function (name) {
-            Object.defineProperty(merged, name, {
-              configurable: true, enumerable: true,
-              value: __lspTrap("Java." + name)
-            });
-          });
-          globalThis.Java = merged;
         })();
     """.trimIndent()
-    /**
-     * API 面装配：LSP_SHIM_JAVA 中 `ourJava.androidVersion` 的字面量占位 token；
-     * loadScript 装配时替换为 Build.VERSION.RELEASE 的真实 JSON 字符串（如 "15"）。
-     */
-    private const val LSP_ANDROID_VERSION_TOKEN = "\"__LSP_ANDROID_VERSION__\""
-    /** 目标进程内读 Build.VERSION.RELEASE → JSON 安全字符串字面量（模块运行于目标进程）。 */
-    private fun lspAndroidVersionLiteral(): String {
-        val release = try { android.os.Build.VERSION.RELEASE } catch (_: Throwable) { null }
-        val safe = (release ?: "0").replace("\\", "\\\\").replace("\"", "\\\"")
-        return "\"" + safe + "\""
-    }
 
-    @Synchronized
-    fun unloadScript() {
-        if (loaded) {
-            try { nativeUnloadScript() } catch (_: Throwable) {}
-            loaded = false
-        }
-    }
-
-    /**
-     * RouteB B1 替换通道（Kotlin 侧入口，HookRouter.replace 分支调用）：
-     * intercept 线程 → 登记请求（id）→ gum_script_post(frida:rpc call) → 条件变量等待（≤500ms）
-     * → JS 结果经 message-dispatcher 自动标准 reply → 本函数返回 reply 的 value JSON
-     * （`{"over":bool,"r":…}`；error 时为 `{"over":false,"err":…}`；内层请求为 `{"__inner":true}`）；
-     * 超时/异常 → 返回 ""（调用方回退 chain.proceed()）。
-     */
-    fun callJs(id: String, payload: String): String = try {
-        nativeCallJs(id, payload)
-    } catch (_: Throwable) {
-        ""
-    }
-
-    /** RouteB：原方法结果回投 JS（async fn 内 this.method 的 resolve；fire-and-forget，无返回值）。 */
-    fun postOriginalReply(id: String, retJson: String) {
-        try {
-            nativePostOriginalReply(id, retJson)
-        } catch (_: Throwable) {
-            // native 未就绪时忽略（回退超时路径）
-        }
-    }
-
-    /** C 层 on_message 通过此函数回传，勿手动调用 */
-    @JvmStatic
-    fun dispatchMessage(message: String) {
-        _messageCallback?.onScriptMessage(message)
-    }
-
-    // ---- JNI 绑定（签名须与 gumjs_bridge.cpp 严格一致）----
+    // ---- JNI 绑定（原名/签名须与 app/src/main/cpp/gumjs_bridge.cpp 严格一致）----
 
     @JvmStatic
     private external fun nativeInitEngine(): Boolean
@@ -513,4 +359,28 @@ object GumJsBridge {
 
     @JvmStatic
     private external fun nativePostOriginalReply(id: String, retJson: String)
+
+    /** JS dispatcher 函数指针（jlong，指针位型原值；0 = 清除）。 */
+    @JvmStatic
+    private external fun nativeSetDispatcher(fn: Long)
+
+    /** 同线程同步执行 JS；未注册/失败 → null。 */
+    @JvmStatic
+    private external fun nativeDispatchHook(payload: String): String?
+
+    /** jobject → jlong 裸指针（null → 0）。 */
+    @JvmStatic
+    private external fun nativePtrOf(obj: Any?): Long
+
+    /** jobject 局部引用 → 全局引用句柄（null/失败 → 0）。 */
+    @JvmStatic
+    private external fun nativeNewGlobalRef(obj: Any?): Long
+
+    /** 全局引用句柄 → 局部引用（0 → null）。 */
+    @JvmStatic
+    private external fun nativeNewLocalRef(handle: Long): Any?
+
+    /** 删除全局引用句柄（0 → 静默）。 */
+    @JvmStatic
+    private external fun nativeDeleteGlobalRef(handle: Long)
 }

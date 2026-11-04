@@ -211,7 +211,11 @@ modules                    : StringSet(moduleId)   # 该包启用的模块集
 3) Provider get_script（两通道都不可用）
 ```
 
-注入侧拼装顺序（不变）：`LSP_SHIM_BASE` → `JavaBridgeBundle` → `LSP_SHIM_JAVA` → 各模块 IIFE（按 moduleId 排序稳定）。
+注入侧拼装顺序（2026-11 第一阶段更新）：`LSP_SHIM_BASE` → `LSP_SHIM_COMPAT` → `JavaBridgeBundle`（上游 frida-java-bridge 7.0.13 真 bundle + LSPlant 适配层）→ 用户脚本。
+
+> ⚠️ 此处已于「frida-java 分支第一阶段」变更：原 `LSP_SHIM_JAVA`（约 340 行兼容子集）已删除，
+> `globalThis.Java` 直接是上游 Runtime 实例。跨语言契约见 `tools/javabridge/BRIDGE-CONTRACT.md`；
+> 变更明细与证据见仓库根 `DONE.md`。
 
 > ⚠️ 写入纪律：`enabled` / `hint_inject` 位置不变（向后兼容）；所有写操作先判断 group 序列化尺寸，超 700KB 拒绝并报错。
 
@@ -589,6 +593,10 @@ commit `f069e7f`（5 文件 +347/-1）。解决了设计之初就登记的硬限
 > `ArtController/MethodMangler` 等一行都不会执行；且其 ART 偏移方案跨版本脆弱，正是选 LSPlant 的原因）。
 
 #### 裁决表（官方 Runtime 成员 → 本模块处置）
+> **历史记录（2026-11 更新）**：下表是"第十轮"兼容子集时代的裁决，`LSP_SHIM_JAVA` 与其 19 个
+> stub / 4 个 trap 已在 frida-java 分支第一阶段整体删除——现在直接运行上游 7.0.13 的真实实现，
+> 本表仅保留为演进记录，不再是当前行为。证据见仓库根 `DONE.md` §1。
+
 | 官方成员/字段 | 处置 | 依据 |
 |---|---|---|
 | `perform` | 已实现 | 本架构=同步直执（无 VM attach 概念） |

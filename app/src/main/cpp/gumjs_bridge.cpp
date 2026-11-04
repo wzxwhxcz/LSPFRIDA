@@ -2,7 +2,9 @@
 #include <android/log.h>
 
 #include <atomic>
+#include <cstdint>
 #include <cstring>
+#include <string>
 
 #include "frida-gumjs.h"
 
@@ -394,6 +396,314 @@ static gchar *lsp_get_utf8(JNIEnv *env, jstring js, const char *fallback) {
     return out;
 }
 
+// ============================================================================
+// 第一阶段双通道（2026-11 接线；契约 = tools/javabridge/BRIDGE-CONTRACT.md §1）
+//
+// 本文件现在有两条方向相反的跨语言通道，线程/锁纪律完全不同，务必区分：
+//
+// ① 上行 JS 线程 → Kotlin 同步反馈：lsp_sync_call（本段实现）
+//    上游 implementation = fn / = null 必须同步拿到路由结果并同步抛错，不允许
+//    fire-and-forget。链路：JS 调 libgumjs_bridge.so 的 C 导出 → 本层用缓存的
+//    jclass/jmethodID → GumJsBridge.lspSync(String): String → 结果 JSON 回 JS。
+//    线程：调用方是 GumJS 的 JS 线程（NativeFunction 同步执行），可能尚未 attach JVM →
+//    GetEnv 失败即 AttachCurrentThread 且**不 detach**（JS 线程长驻，与上游 vm.perform
+//    对 jsThread 的处理一致；重复调用时 GetEnv 直接成功，不会重复 attach）。
+//    锁纪律：全程**不持有** g_pending_lock / g_script_lock / g_callback_lock 进 Kotlin
+//    （Kotlin 侧可能反过来回到 nativeCallJs，持锁进 Kotlin 会造成锁序/自等）。
+//
+// ② 下行 同线程同步 app 线程 → JS：nativeDispatchHook（本段实现）
+//    上游 implement() 的 hook 回调机制是 NativeCallback：ART 在 app（拦截）线程调用，
+//    JS 就在该线程同步执行。故 Kotlin → nativeDispatchHook → JS dispatcher 全程同一线程：
+//    无 post、无 pending、无 500ms 泵等待、无锁。JS 返回的 char* 属 JS
+//    （Memory.allocUtf8String），本层只读、**不 free**。
+//
+// 与 RouteB 的关系：上面 RouteB 的 nativeCallJs 是**反向**通道（Kotlin→JS 异步 rpc +
+// 500ms 泵等待），保留为 dispatcher 未注册/失败时的兜底；两条通道不要混用。
+// 重入保护：JS 执行上下文内（JS 线程的 lsp_sync_call、或 app 线程的 nativeDispatchHook）
+// 再进 nativeCallJs 必然自己等自己（JS 引擎单线程 + JS 锁），→ 立即返回
+// {"__reentrant":true}，Kotlin 收到该标记直接 proceed 兜底，不吃 500ms 超时。
+//
+// 句柄约定：全局/局部引用句柄 = (void*)(intptr_t)jobject 原值，Kotlin 一律用 Long 传递、
+// 不做算术；lsp_new_global_ref / lsp_delete_global_ref 供 JS 钉住/释放对象（如 Class），
+// nativeNewGlobalRef / nativeNewLocalRef / nativeDeleteGlobalRef / nativePtrOf 供 Kotlin 侧
+// 在回调协议里搬运 <E> 编码里的对象引用。C ABI 导出用默认可见性（显式 attribute 防御
+// 未来误加 -fvisibility=hidden；JNIEXPORT 本身已带 default 可见性）。
+// ============================================================================
+
+// lspSync 目标：GumJsBridge 是 Kotlin object + @JvmStatic → static java.lang.String lspSync(java.lang.String)
+#define LSP_SYNC_SIG "(Ljava/lang/String;)Ljava/lang/String;"
+// nativeCallJs 同线程重入快速返回标记（Kotlin 收到即走 chain.proceed 兜底）
+#define LSP_REENTRANT_MARKER "{\"__reentrant\":true}"
+
+// —— 上行缓存：GumJsBridge 类全局引用 / lspSync 静态方法 id ——
+// 建立方式：nativeInitEngine 用传入的 jclass 参数 NewGlobalRef（**禁止 FindClass**：
+// 模块类不在 app classloader 里，attach 线程的 FindClass 找不到）。
+static std::atomic<jclass> g_bridge_class{nullptr};
+static std::atomic<jmethodID> g_sync_mid{nullptr};
+
+// —— 下行：JS 侧 NativeCallback 函数指针（nullptr = 未注册；脚本加载/卸载时置空） ——
+static std::atomic<void *> g_js_dispatcher{nullptr};
+
+// —— JS 执行上下文识别（nativeCallJs 重入自等保护） ——
+// 注意：on_message 在消息泵线程（默认 GMainContext）上执行，**不是** JS 线程，不能在那里记录，
+// 否则会把泵线程误标成 JS 线程。JS 线程身份由第一次 lsp_sync_call 反推（该 C 导出只可能被
+// JS 的 NativeFunction 在 JS 线程同步调用），再配合线程局部“正在同步执行 JS”的深度：
+//   - JS 线程进 lsp_sync_call（Kotlin lspSync 内可能回流 nativeCallJs）；
+//   - app 线程进 nativeDispatchHook（其 JS 回调内可能回流 nativeCallJs）。
+static std::atomic<GThread *> g_js_thread_id{nullptr};
+static thread_local int t_lsp_js_depth = 0;
+
+/** 标记“本线程当前处于 JS 执行上下文”，作用域结束自动复原（提前 return 亦生效）。 */
+struct LspJsGuard {
+    LspJsGuard() { t_lsp_js_depth++; }
+    ~LspJsGuard() { t_lsp_js_depth--; }
+};
+
+/** 取当前线程 JNIEnv：未 attach 则 AttachCurrentThread 且**不 detach**（JS 线程长驻，
+ *  与上游 vm.perform 对 jsThread 的处理一致）；已 attach 时 GetEnv 直接成功、不重复 attach。
+ *  JVM 未初始化（nativeInitEngine 之前）返回 nullptr。 */
+static JNIEnv *lsp_env_get(void) {
+    if (g_vm == nullptr) return nullptr;
+    JNIEnv *env = nullptr;
+    if (g_vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) == JNI_OK) return env;
+    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return nullptr;
+    return env;
+}
+
+/** 首次在 JS 线程调用时记录线程身份（幂等；仅在 JS 线程侧路径调用）。 */
+static void lsp_note_js_thread(void) {
+    if (g_js_thread_id.load(std::memory_order_relaxed) == nullptr) {
+        g_js_thread_id.store(g_thread_self(), std::memory_order_release);
+    }
+}
+
+/** 当前线程是否处于 JS 执行上下文（同线程再调 nativeCallJs 必自等超时）。 */
+static bool lsp_in_js_context(void) {
+    if (t_lsp_js_depth > 0) return true;
+    GThread *jt = g_js_thread_id.load(std::memory_order_acquire);
+    return jt != nullptr && jt == g_thread_self();
+}
+
+/** nativeInitEngine 调用：用传入的 jclass NewGlobalRef 缓存 GumJsBridge 类引用。
+ *  @return false = 缓存失败（env/clazz 无效或 NewGlobalRef OOM），调用方降级继续。 */
+static bool lsp_cache_bridge_class(JNIEnv *env, jclass clazz) {
+    if (env == nullptr || clazz == nullptr) {
+        LOGE("[sync] cache bridge class failed (env=%p clazz=%p)", (void *) env, (void *) clazz);
+        return false;
+    }
+    if (g_bridge_class.load(std::memory_order_acquire) == nullptr) {
+        jclass cached = (jclass) env->NewGlobalRef(clazz);
+        if (cached == nullptr) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            LOGE("[sync] NewGlobalRef(GumJsBridge) failed");
+            return false;
+        }
+        g_bridge_class.store(cached, std::memory_order_release);
+        LOGI("[sync] GumJsBridge class cached (global ref)");
+    }
+    return true;
+}
+
+/** 惰性补齐 lspSync 的 jmethodID（缓存命中即 no-op）。失败时清掉 NoSuchMethodError，
+ *  返回 nullptr；lsp_sync_call 每次会重试（Kotlin 侧签名修正后无需重启进程）。 */
+static jmethodID lsp_ensure_sync_mid(JNIEnv *env) {
+    jmethodID mid = g_sync_mid.load(std::memory_order_acquire);
+    if (mid != nullptr) return mid;
+    jclass cls = g_bridge_class.load(std::memory_order_acquire);
+    if (cls == nullptr) return nullptr;
+    mid = env->GetStaticMethodID(cls, "lspSync", LSP_SYNC_SIG);
+    if (mid == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();   // NoSuchMethodError 不得悬挂
+        LOGE("[sync] GetStaticMethodID lspSync%s not found", LSP_SYNC_SIG);
+        return nullptr;
+    }
+    g_sync_mid.store(mid, std::memory_order_release);
+    LOGI("[sync] lspSync method id cached");
+    return mid;
+}
+
+/** 失败结果：写合法 JSON 到 thread_local 缓冲并返回其 c_str（契约：永不返回非法 JSON）。 */
+static const char *lsp_sync_fail(std::string &out, const char *msg) {
+    out.assign("{\"ok\":false,\"err\":\"");
+    out.append(msg != nullptr ? msg : "lspSync failed");
+    out.append("\"}");
+    return out.c_str();
+}
+
+// C ABI 导出（默认可见性；显式 visibility 防御未来误加 -fvisibility=hidden）
+#define LSP_EXPORT extern "C" __attribute__((visibility("default")))
+
+/**
+ * 同步回调 Kotlin：GumJsBridge.lspSync(String): String。
+ * 返回 thread_local UTF-8 NUL 结尾缓冲（下一次同线程调用前有效）。
+ * 任何 JNI/异常/空返回都不得崩：失败返回 {"ok":false,"err":"..."}（合法 JSON）。
+ * 锁纪律：本函数不取任何本文件的锁（Kotlin 侧可能回到 nativeCallJs）。
+ */
+LSP_EXPORT const char *lsp_sync_call(const char *json) {
+    thread_local std::string t_result;   // 契约：同线程下次调用前有效
+    LspJsGuard guard;                    // 本线程正在 JS 执行上下文（nativeCallJs 重入保护）
+    lsp_note_js_thread();                // 本线程 = JS 线程（NativeFunction 同步执行）
+
+    JNIEnv *env = lsp_env_get();
+    if (env == nullptr) return lsp_sync_fail(t_result, "no JavaVM or attach failed");
+
+    // 类引用在 nativeInitEngine 缓存；方法 id 未命中则惰性重试（同样只用缓存 jclass）
+    if (g_bridge_class.load(std::memory_order_acquire) == nullptr ||
+        lsp_ensure_sync_mid(env) == nullptr) {
+        return lsp_sync_fail(t_result, "GumJsBridge.lspSync not cached");
+    }
+
+    const char *arg = (json != nullptr) ? json : "";
+    // 输入侧 UTF 修复：与既有代码一致，避免 NewStringUTF 对 4 字节 UTF-8（emoji）的未定义行为
+    jstring jarg = lsp_new_jstring(env, arg);
+    if (jarg == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return lsp_sync_fail(t_result, "lspSync arg conversion failed");
+    }
+
+    jobject jres = env->CallStaticObjectMethod(g_bridge_class.load(std::memory_order_acquire),
+                                               g_sync_mid.load(std::memory_order_acquire), jarg);
+    env->DeleteLocalRef(jarg);
+
+    if (env->ExceptionCheck()) {
+        // Kotlin 侧抛异常（如 install 失败的自定义异常）：清掉并回合法失败 JSON，JS 侧据 ok:false 抛
+        env->ExceptionClear();
+        if (jres != nullptr) env->DeleteLocalRef(jres);
+        return lsp_sync_fail(t_result, "lspSync exception");
+    }
+    if (jres == nullptr) return lsp_sync_fail(t_result, "lspSync null/exception");
+
+    gchar *utf8 = lsp_get_utf8(env, (jstring) jres, nullptr);
+    env->DeleteLocalRef(jres);
+    if (utf8 == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();   // GetStringChars OOM 等：不悬挂异常
+        return lsp_sync_fail(t_result, "lspSync result conversion failed");
+    }
+    t_result.assign(utf8);   // 标准 UTF-8 → thread_local 缓冲
+    g_free(utf8);
+    if (t_result.empty()) return lsp_sync_fail(t_result, "lspSync empty result");
+    return t_result.c_str();
+}
+
+/** 把 JS 线程上的 jobject 局部引用钉成全局引用（失败 NULL）。句柄即 jobject 原值。
+ *  注：不在此记录 JS 线程身份——本函数也可能在 nativeDispatchHook 的 app 线程 JS 回调里
+ *  被调用，记录会把 app 线程误标成 JS 线程（重入标记必须靠 t_lsp_js_depth 覆盖该场景）。 */
+LSP_EXPORT void *lsp_new_global_ref(void *localRef) {
+    if (localRef == nullptr) return nullptr;
+    JNIEnv *env = lsp_env_get();
+    if (env == nullptr) return nullptr;
+    jobject g = env->NewGlobalRef(reinterpret_cast<jobject>(localRef));
+    if (g == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    return reinterpret_cast<void *>(g);
+}
+
+/** 删除 lsp_new_global_ref 返回的全局引用（无效/未初始化时静默）。 */
+LSP_EXPORT void lsp_delete_global_ref(void *globalRef) {
+    if (globalRef == nullptr) return;
+    JNIEnv *env = lsp_env_get();
+    if (env == nullptr) return;
+    env->DeleteGlobalRef(reinterpret_cast<jobject>(globalRef));
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+// ----------------------------------------------------------------------------
+// 下行：同线程同步 JS 回调（app/拦截线程 → JS NativeCallback）
+// ----------------------------------------------------------------------------
+
+/** JS 侧 dispatcher 原型：char* fn(const char* payloadJson)。
+ *  返回值为 JS 分配的 UTF-8 缓冲（Memory.allocUtf8String），生命周期由 JS 管，本层不 free。 */
+typedef char *(*LspJsDispatchFn)(const char *payload);
+
+/** 注册/清除 JS dispatcher 函数指针（fn == 0 → 清除）。 */
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeSetDispatcher(JNIEnv *, jclass, jlong fn) {
+    g_js_dispatcher.store(reinterpret_cast<void *>((intptr_t) fn), std::memory_order_release);
+    LOGI("[dispatch] js dispatcher %s", (fn != 0) ? "registered" : "cleared");
+}
+
+/**
+ * 同线程同步调用 JS：payload 为 UTF-8 JSON，返回结果 JSON（jstring）。
+ * 失败/未注册返回 NULL（Kotlin 走 nativeCallJs 异步兜底）。
+ * 锁纪律：不取 pending/script/callback 锁（JS 内可能反过来调 JNI 触发其它路径）。
+ */
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeDispatchHook(
+        JNIEnv *env, jclass, jstring jpayload) {
+    if (env == nullptr) return nullptr;
+    void *fn_raw = g_js_dispatcher.load(std::memory_order_acquire);
+    if (fn_raw == nullptr) return nullptr;   // 未注册（脚本未加载/已卸载）
+
+    gchar *json = lsp_get_utf8(env, jpayload, nullptr);   // payload 可能含非 BMP 字符
+    if (json == nullptr) return nullptr;
+    if (env->ExceptionCheck()) {   // 防御：进 JS 前清掉悬挂异常，避免污染 JS 回调内的 JNI
+        env->ExceptionClear();
+        g_free(json);
+        return nullptr;
+    }
+
+    // 进入 JS 执行上下文：本线程内若回流 nativeCallJs，必须快速返回而不是自等 500ms
+    LspJsGuard guard;
+    char *ret = ((LspJsDispatchFn) (intptr_t) fn_raw)(json);
+    g_free(json);
+
+    if (ret == nullptr) return nullptr;   // JS 侧异常/空结果 → 交给 Kotlin async fallback
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    // ret 属 JS（Memory.allocUtf8String）：只读转换，不 free、不 DeleteLocalRef 之外的释放
+    jstring out = lsp_new_jstring(env, ret);
+    if (out == nullptr && env->ExceptionCheck()) env->ExceptionClear();
+    return out;
+}
+
+/** jobject → (jlong)(intptr_t)jobject（null → 0）。供 Kotlin 把 app 线程局部引用地址交给
+ *  同线程 JS 用 Java.cast(ptr, ...) 临时引用；调用方必须保证在该局部引用有效期内使用。 */
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_com_bail_lspfrifa_xposed_GumJsBridge_nativePtrOf(JNIEnv *, jclass, jobject obj) {
+    return (jlong) reinterpret_cast<intptr_t>(obj);
+}
+
+// ----------------------------------------------------------------------------
+// 引用助手 JNI（Kotlin 侧 private external；回调协议 <E> 编码搬运对象引用）
+// ----------------------------------------------------------------------------
+
+/** 局部引用 → 全局引用，返回句柄；obj == NULL → 0。 */
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeNewGlobalRef(JNIEnv *env, jclass, jobject obj) {
+    if (env == nullptr || obj == nullptr) return 0;
+    jobject g = env->NewGlobalRef(obj);
+    if (g == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return 0;
+    }
+    return (jlong) reinterpret_cast<intptr_t>(g);
+}
+
+/** 全局引用句柄 → 局部引用；handle == 0 → NULL。 */
+extern "C"
+JNIEXPORT jobject JNICALL
+Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeNewLocalRef(JNIEnv *env, jclass, jlong handle) {
+    if (env == nullptr || handle == 0) return nullptr;
+    return env->NewLocalRef(reinterpret_cast<jobject>((intptr_t) handle));
+}
+
+/** 删除全局引用句柄；handle == 0 → 静默。 */
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeDeleteGlobalRef(JNIEnv *env, jclass, jlong handle) {
+    if (env == nullptr || handle == 0) return;
+    env->DeleteGlobalRef(reinterpret_cast<jobject>((intptr_t) handle));
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
 // GumJS on_message -> JNI 回调宿主层 (console.log / send() / frida:rpc reply)
 static void on_message(const gchar *message, GBytes *data, gpointer user_data) {
     (void) data; (void) user_data;
@@ -502,8 +812,13 @@ static void lspfrifa_ensure_pump(void) {
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeInitEngine(JNIEnv *env, jclass) {
+Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeInitEngine(JNIEnv *env, jclass clazz) {
     env->GetJavaVM(&g_vm);
+    // 第一阶段上行通道：用**传入的 jclass 参数** NewGlobalRef 缓存 GumJsBridge 类引用，
+    // 并顺带预取静态方法 lspSync 的 jmethodID。禁止 FindClass：模块类不在 app classloader
+    // 里，attach 线程的 FindClass 找不到（见 BRIDGE-CONTRACT.md §1.2）。
+    lsp_cache_bridge_class(env, clazz);
+    lsp_ensure_sync_mid(env);
     g_mutex_init(&g_pending_lock);
     g_mutex_init(&g_script_lock);     // 引擎审查修复：g_script 生命周期锁
     g_mutex_init(&g_callback_lock);   // 引擎审查修复：g_callback 交换锁
@@ -556,6 +871,10 @@ extern "C"
 JNIEXPORT jboolean JNICALL
 Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeLoadScript(
         JNIEnv *env, jclass, jstring jscript, jstring jname) {
+
+    // 第一阶段下行通道：脚本引用即将失效 → JS 侧 dispatcher 指针必须作废
+    // （旧脚本的 main() 若在加载期重新上报，会在 gum_script_load_sync 内覆盖本值）
+    g_js_dispatcher.store(nullptr, std::memory_order_release);
 
     pending_clear_all();   // RouteB：重载前清空在途 replace 请求（等待者回退 proceed）
 
@@ -668,6 +987,8 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeLoadScript(
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeUnloadScript(JNIEnv *, jclass) {
+    // 第一阶段下行通道：脚本卸载后 JS 侧函数指针必失效（在途 dispatch 竞态窗口由调用方兜底）
+    g_js_dispatcher.store(nullptr, std::memory_order_release);
     pending_clear_all();   // RouteB: 清空在途请求
     // 竞态修复：同 nativeLoadScript——锁内摘除、锁外卸载。
     g_mutex_lock(&g_script_lock);
@@ -692,6 +1013,12 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeUnloadScript(JNIEnv *, jclass) {
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeCallJs(JNIEnv *env, jclass, jstring jid, jstring jpayload) {
+    // 同线程重入快速返回：当前线程已处于 JS 执行上下文（JS 线程的 lsp_sync_call 内，或
+    // app 线程的 nativeDispatchHook 同步执行 JS 时）再 post+等 500ms = 自己等自己必超时
+    // （JS 引擎单线程 + JS 锁，reply 不可能在本线程阻塞期间被处理）。
+    // 直接回 {"__reentrant":true}，Kotlin 收到该标记走 chain.proceed 兜底。
+    if (lsp_in_js_context()) return env->NewStringUTF(LSP_REENTRANT_MARKER);
+
     // 竞态修复：锁内取强引用（防与 reload 的 unload+unref 竞争 → UAF）；用毕 unref。
     GumScript *script = lsp_acquire_script();
     if (script == nullptr) return env->NewStringUTF("");
