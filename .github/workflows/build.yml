@@ -1,0 +1,56 @@
+# LSPFRIDA Android CI — frida-java branch
+# Builds the LSPosed module (assembleDebug), runs the JS bridge tests and the
+# zygote gate/injector tests. The frida-gumjs devkit is NOT committed (191 MB);
+# it is fetched from the Frida release matching the pinned version below.
+name: Android CI
+
+on:
+  push:
+    branches: [frida-java]
+  pull_request:
+    branches: [frida-java]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-37" "build-tools;36.0.0" \
+            "ndk;28.2.13672021" "cmake;3.22.1"
+
+      - name: Fetch frida-gumjs devkit (17.9.3, pinned to the local build)
+        run: bash app/src/main/cpp/fetch_gumjs_devkit.sh 17.9.3
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --stacktrace
+
+      - name: JS bridge tests (frida-java-bridge adapter)
+        run: |
+          cd tools/javabridge
+          npm test
+
+      - name: Zygote gate/injector tests
+        run: |
+          cd tools/zygote
+          bash test.sh
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
