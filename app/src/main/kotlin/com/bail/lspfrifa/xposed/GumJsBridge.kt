@@ -12,7 +12,8 @@ package com.bail.lspfrifa.xposed
  *
  * ## 第一阶段（frida-java-bridge 7.0.13 接通）后的形态
  *
- * 注入顺序：`LSP_SHIM_BASE`（官方 send 通道，LSP.hook/toast/unhookAll）→ `LSP_SHIM_COMPAT`
+ * 注入顺序：`globalThis.__lspZygoteGate = <json 或 null>;`（第二阶段 gate 标记，固定一行）→
+ * `LSP_SHIM_BASE`（官方 send 通道，LSP.hook/toast/unhookAll）→ `LSP_SHIM_COMPAT`
  * （queueMicrotask 补齐，非 Java 语义）→ `JavaBridgeBundle`（上游 7.0.13 真 bundle，含 adapter）
  * → 用户脚本。**不再有 LSP_SHIM_JAVA**：`globalThis.Java` 就是上游 Runtime 实例，
  * `perform` / `use` / `overload` / `implementation` / `choose` / `cast` / `factory.loader` 等
@@ -200,6 +201,14 @@ object GumJsBridge {
         }
     }
 
+    // ==================== 第二阶段：zygote gate 标记（设计 §3.5） ====================
+    //
+    // 标记本身由 [ZygoteGate] 在 onModuleLoaded 里一次性探测并持有；本类在 loadScript 时**惰性读取**
+    // （`ZygoteGate.currentJson()`），因此 onModuleLoaded 阶段**不触碰** GumJsBridge——
+    // 否则会在模块回调线程里触发 `System.loadLibrary("gumjs_bridge")`，把 39 MB 原生库映射进
+    // 并非目标应用的进程（含 system_server 这类误选场景）。惰性读取保证该库仍只在
+    // 第一阶段既有的注入点（runEarlyInject / init）加载，注入链顺序零改动。
+
     // ==================== 脚本装载 ====================
 
     @Synchronized
@@ -220,6 +229,12 @@ object GumJsBridge {
         dispatcherReady = false
         loaded = try {
             val combined = buildString {
+                // 第二阶段（docs/Zygote-Injection-Design.md §3.5）：gate 标记固定注入一行，
+                // 位置在 LSP_SHIM_BASE **之前**，脚本开头即可判定（未探测到则写字面量 null，
+                // 行本身固定出现，脚本无需 typeof 兜底）。
+                append("globalThis.__lspZygoteGate = ")
+                append(ZygoteGate.currentJson() ?: "null")
+                append(";\n")
                 append(LSP_SHIM_BASE)
                 append("\n;\n")
                 append(LSP_SHIM_COMPAT)

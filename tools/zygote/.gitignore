@@ -1,0 +1,5 @@
+# build outputs for the standalone gate/injector (never committed)
+out/
+# host E2E fixture libraries are build products
+tests/mock/*.so
+*.o

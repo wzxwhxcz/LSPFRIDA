@@ -474,3 +474,67 @@ test('dispatcher 注册失败时 install 抛错（不让用户以为 hook 装上
   assert.equal(info.mode, 'native', 'sync 不可用且无 rpc → 退回原生 ArtMethod 路径');
   assert.equal(h.backend, null);
 });
+
+// ---- 第二阶段：zygote gate 标记（设计 §3.6 / BRIDGE-CONTRACT.md §6） -------------
+
+test('zygoteGate 合法 → info.zygote 精确形状（hit=true 与 hit=false 均是合法值）', () => {
+  const h = makeHarness();
+  const info = h.adapter.install({
+    zygoteGate: {
+      hit: true,
+      name: '/lspfrifa-zygote-gate',
+      ppid: 4242,
+      proc: 'com.example.app:push',
+    },
+  });
+  // 既有 mode/version 语义不受影响
+  assert.equal(info.mode, 'lsplant-sync');
+  assert.equal(info.version, ADAPTER_VERSION);
+  assert.deepEqual(info.zygote, {
+    hit: true,
+    name: '/lspfrifa-zygote-gate',
+    ppid: 4242,
+    proc: 'com.example.app:push',
+  });
+
+  // hit=false = "探测过、本进程不是 gate 子进程"，也是合法形状（字段齐全、hit 为 false）
+  const h2 = makeHarness();
+  const absent = h2.adapter.install({
+    zygoteGate: { hit: false, name: null, ppid: null, proc: null },
+  });
+  assert.deepEqual(absent.zygote, { hit: false, name: null, ppid: null, proc: null });
+});
+
+test('zygoteGate 缺失 → info 无 zygote 键（phase-1 形态逐字段不变）', () => {
+  const h = makeHarness();
+  const info = h.adapter.install({});
+  assert.deepEqual(info, { mode: 'lsplant-sync', version: ADAPTER_VERSION });
+  assert.equal('zygote' in info, false);
+
+  // 原生回退路径同样只在"有合法 gate"时才带字段
+  const nativeHarness = makeHarness();
+  const nativeInfo = nativeHarness.adapter.install({ nativeFallback: true });
+  assert.deepEqual(nativeInfo, { mode: 'native', version: ADAPTER_VERSION });
+  assert.equal('zygote' in nativeInfo, false);
+});
+
+test('zygoteGate 坏数据（类型/形状非法）→ 无 zygote 键且不抛', () => {
+  const h = makeHarness();
+  const badValues = [
+    'not-an-object', // 坏类型（entry.js 解析失败时理论上不会传 string，这里仍防御）
+    42,
+    null,
+    [],
+    {},
+    { hit: 'yes' }, // hit 必须是 boolean
+    { hit: 1, name: 'x' },
+  ];
+  for (const value of badValues) {
+    const info = h.adapter.install({ zygoteGate: value });
+    assert.equal(info.mode, 'lsplant-sync');
+    assert.equal(
+      'zygote' in info,
+      false,
+      '坏值 ' + JSON.stringify(value) + ' 不应产生 zygote 键');
+  }
+});

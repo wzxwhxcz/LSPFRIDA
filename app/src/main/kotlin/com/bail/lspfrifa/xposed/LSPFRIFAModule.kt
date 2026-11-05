@@ -120,6 +120,28 @@ class LSPFRIFAModule : XposedModule() {
 
     override fun onModuleLoaded(param: XposedModuleInterface.ModuleLoadedParam) {
         record(Log.INFO, "event=module_loaded process=${param.processName}")
+
+        // 第二阶段（docs/Zygote-Injection-Design.md §3.5）：在本进程最早的模块回调里只探一次
+        // gate 标记并写快照；JSON 由 GumJsBridge.loadScript 惰性读取（不在本回调触碰 native 库，
+        // 避免把 39 MB 引擎库映射进并非目标应用的进程）。
+        // 纪律：**只观测、不决策**。gate 缺失/非 gate 子进程 = 记 absent，第一阶段链路零改动。
+        val gate = ZygoteGate.probe()
+        if (gate.hit) {
+            record(
+                Log.INFO,
+                "event=zygote_gate_hit pkg=" + param.processName +
+                    " gate=" + (gate.name ?: "") +
+                    " ppid=" + (gate.ppid?.toString() ?: ""),
+            )
+        } else {
+            record(Log.INFO, "event=zygote_gate_absent pkg=" + param.processName)
+        }
+        // 纯内存快照；try/catch 只为不让观测代码打断模块装载（防御性，理论上不抛）。
+        try {
+            ZygoteGate.record(gate)
+        } catch (t: Throwable) {
+            record(Log.WARN, "event=zygote_gate_record_failed pkg=" + param.processName + " err=" + t.message)
+        }
     }
 
     /**

@@ -171,3 +171,41 @@ HookRouter 的 `hookDepth > 0` 重入守卫直接 `chain.proceed()`，JS 同步�
 - adapter 单测：`node --test tools/javabridge/test/`。
 - 静态检查：`bash tools/check-kt.sh`（若脚本依赖 kotlinc 则记录限制）。
 - 真机构建：`./gradlew :app:assembleDebug`（需 devkit + SDK；见 README）。
+
+## 6. 第二阶段：zygote gate 标记（消费侧）
+
+写侧（gate payload / daemon）在 `tools/zygote`，冻结设计见 `docs/Zygote-Injection-Design.md`
+§3.3/§3.5/§3.6。本节只定义**本仓库消费侧**的边界；它不改变第 0–3 节的任何语义
+（同步通道、注入顺序、`__lspBridgeInfo.mode/version` 均原样）。
+
+### 6.1 Kotlin → JS：`globalThis.__lspZygoteGate`
+
+- **写入方**：`LSPFRIFAModule.onModuleLoaded`（每进程最早的模块回调）调用
+  `ZygoteGate.probe()` 读 `LSPFRIDA_ZYGOTE_GATE` / `_NAME` / `_PPID` / `_PROC`
+  （`hit` 当且仅当 `LSPFRIDA_ZYGOTE_GATE == "1"`），把 `ZygoteGate.toJson(info)` 交给
+  `GumJsBridge.setZygoteGateJson(json)`；结果快照另存 companion `@Volatile` 字段。
+- **注入点**：`GumJsBridge.loadScript` 在 `LSP_SHIM_BASE` **之前固定追加一行**：
+  `globalThis.__lspZygoteGate = <json 或 null>;`（未探测到 = 字面量 `null`；行始终出现）。
+- **JSON 形状**（`ZygoteGate.toJson`，手写转义、无 JSON 库依赖）：
+  `{"hit":true|false,"name":string|null,"ppid":number|null,"proc":string|null}`。
+  控制字符转义，保证嵌入的单行 JS 不被破坏。
+- **读取方**：`entry.js` 的 `readZygoteGate()` 防御式解析——非 string / `JSON.parse` 失败 /
+  非对象 / `hit` 非 boolean → `null`，**永不抛**；结果作为 `zygoteGate` 传给 `adapter.install()`。
+
+### 6.2 `__lspBridgeInfo.zygote`
+
+`adapter.install(options)` 在 `options.zygoteGate` **合法**（对象且 `hit` 是 boolean）时，
+于返回 info 中附加一个字段（native 回退路径同样适用）：
+
+```json
+{"mode":"lsplant-sync","version":"1.0.0-rc1",
+ "zygote":{"hit":true,"name":"/lspfrifa-zygote-gate","ppid":4242,"proc":"com.example.app"}}
+```
+
+- 字段固定为 `hit` / `name` / `ppid` / `proc`：`name`/`proc` 非 string、`ppid` 非有限数字 → `null`。
+- **缺失/非法 → info 里不出现 `zygote` 键**（此时 `__lspBridgeInfo` 与第一阶段逐字段一致）。
+- `hit:false` 是合法值 = "探测过、本进程不是 gate 子进程"；与"没有 `zygote` 键"
+  （未探测/坏数据）是两种不同状态，脚本可据此区分。
+- 局限（不夸大）：该标记只能证明"gate payload 在本进程出生点跑过"，**不**代表脚本/hook
+  早于应用代码（设计文档 §7.1）；gate 缺失时本契约整体 fail-open，第一阶段行为不变。
+

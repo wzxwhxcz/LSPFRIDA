@@ -11,6 +11,10 @@
  *      因此 `this` 是真实 wrapper、`this.method()` 是同步原调用（靠 Kotlin 侧重入守卫）。
  *   3. 保留上游原生 ArtMethod 路径作为回退对照：只要 sync 通道不可用（cpp 导出缺失 /
  *      `globalThis.__lspNativeReplace === true`），就不注册 backend，行为与上游一致。
+ *   4. 第二阶段附加（不改上面任何语义）：`install({ zygoteGate })` 把 Kotlin 侧探测到的
+ *      zygote gate 标记（设计文档 §3.5）规整为返回 info 的 `zygote: {hit,name,ppid,proc}`；
+ *      缺失/非法则**不加该字段**（`__lspBridgeInfo` 与第一阶段逐字段一致）。契约见
+ *      BRIDGE-CONTRACT.md §6。
  *
  * 与上游的显式偏差（见 DONE.md）：
  *   - implementation 不允许 async（上游同样不允许；sync 路径下 thenable 按不兼容处理）。
@@ -442,31 +446,66 @@ export function installLspBackend (deps) {
   }
 
   // ---------------------------------------------------------------------------
+  // 第二阶段：zygote gate 标记（docs/Zygote-Injection-Design.md §3.6）
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 入参 `zygoteGate`（Kotlin 侧 ZygoteGate.probe 的 JSON）→ `info.zygote` 的规范形状。
+   *
+   * 合法 = 对象且 `hit` 是 boolean（其余字段类型不对时按 null 补齐，不因单个字段畸形丢弃整条：
+   * gate 是观测信息）。非法/缺失 → null（= 返回的 info 里**不出现** zygote 键，
+   * 此时 `__lspBridgeInfo` 与第一阶段逐字段一致）。
+   *
+   * @returns {{hit: boolean, name: string|null, ppid: number|null, proc: string|null}|null}
+   */
+  function normalizeZygoteGate (zygoteGate) {
+    if (zygoteGate === null || typeof zygoteGate !== 'object' || Array.isArray(zygoteGate)) {
+      return null;
+    }
+    if (typeof zygoteGate.hit !== 'boolean') return null;
+    return {
+      hit: zygoteGate.hit,
+      name: typeof zygoteGate.name === 'string' ? zygoteGate.name : null,
+      ppid: typeof zygoteGate.ppid === 'number' && Number.isFinite(zygoteGate.ppid)
+        ? Math.trunc(zygoteGate.ppid)
+        : null,
+      proc: typeof zygoteGate.proc === 'string' ? zygoteGate.proc : null,
+    };
+  }
+
+  /** 合法 gate 才附加字段；非法/缺失保持 phase-1 的 info 形状不变。 */
+  function withZygoteGate (info, zygote) {
+    if (zygote !== null) info.zygote = zygote;
+    return info;
+  }
+
+  // ---------------------------------------------------------------------------
   // 安装
   // ---------------------------------------------------------------------------
 
   function install (options = {}) {
-    const { rpc, nativeFallback = false } = options;
+    const { rpc, nativeFallback = false, zygoteGate } = options;
+    const zygote = normalizeZygoteGate(zygoteGate);
 
     if (nativeFallback === true) {
       log('[lsp] Java bridge: native ArtMethod replacement path selected (fallback)');
-      return { mode: 'native', version: ADAPTER_VERSION };
+      return withZygoteGate({ mode: 'native', version: ADAPTER_VERSION }, zygote);
     }
 
     const asyncOk = installAsyncFallback(rpc);
     const syncOk = registerDispatcher();
     if (!syncOk && !asyncOk) {
       log('[lsp] Java bridge: no sync channel and no rpc → native ArtMethod path (fallback)');
-      return { mode: 'native', version: ADAPTER_VERSION };
+      return withZygoteGate({ mode: 'native', version: ADAPTER_VERSION }, zygote);
     }
 
     setReplacementBackend(backend);
     log('[lsp] Java bridge adapter ' + ADAPTER_VERSION + ' installed (mode=' +
       (syncOk ? 'lsplant-sync' : 'lsplant-async-fallback') + ')');
-    return {
+    return withZygoteGate({
       mode: syncOk ? 'lsplant-sync' : 'lsplant-async-fallback',
       version: ADAPTER_VERSION,
-    };
+    }, zygote);
   }
 
   return {

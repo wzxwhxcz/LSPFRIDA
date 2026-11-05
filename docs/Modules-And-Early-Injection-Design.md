@@ -215,7 +215,7 @@ modules                    : StringSet(moduleId)   # 该包启用的模块集
 
 > ⚠️ 此处已于「frida-java 分支第一阶段」变更：原 `LSP_SHIM_JAVA`（约 340 行兼容子集）已删除，
 > `globalThis.Java` 直接是上游 Runtime 实例。跨语言契约见 `tools/javabridge/BRIDGE-CONTRACT.md`；
-> 变更明细与证据见仓库根 `DONE.md`。
+> 变更明细与证据见仓库根 `DONE-phase1.md`（第一阶段证据；仓库根 `DONE.md` 现为第二阶段文档）。
 
 > ⚠️ 写入纪律：`enabled` / `hint_inject` 位置不变（向后兼容）；所有写操作先判断 group 序列化尺寸，超 700KB 拒绝并报错。
 
@@ -595,7 +595,7 @@ commit `f069e7f`（5 文件 +347/-1）。解决了设计之初就登记的硬限
 #### 裁决表（官方 Runtime 成员 → 本模块处置）
 > **历史记录（2026-11 更新）**：下表是"第十轮"兼容子集时代的裁决，`LSP_SHIM_JAVA` 与其 19 个
 > stub / 4 个 trap 已在 frida-java 分支第一阶段整体删除——现在直接运行上游 7.0.13 的真实实现，
-> 本表仅保留为演进记录，不再是当前行为。证据见仓库根 `DONE.md` §1。
+> 本表仅保留为演进记录，不再是当前行为。证据见仓库根 `DONE-phase1.md` §1（第一阶段证据）。
 
 | 官方成员/字段 | 处置 | 依据 |
 |---|---|---|
