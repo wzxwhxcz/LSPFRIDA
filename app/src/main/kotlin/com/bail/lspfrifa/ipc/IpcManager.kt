@@ -1,11 +1,13 @@
 package com.bail.lspfrifa.ipc
 
+import android.content.Context
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.RemoteException
 import android.util.Log
 import com.bail.lspfrifa.FrameworkState
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.data.InjectHintStore
 import io.github.libxposed.service.HookedTarget
 import io.github.libxposed.service.HotReloadResult
@@ -18,6 +20,17 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object IpcManager {
     private const val TAG = "LSPFRIFA-IpcManager"
+
+    /** 本地化文案所需 Context（Application 阶段 [init] 注入）。 */
+    @Volatile
+    private var appCtx: Context? = null
+
+    fun init(context: Context) {
+        appCtx = context.applicationContext
+    }
+
+    /** 取已本地化文案；未 init 属异常时序，回退空串（不落中文硬编码）。 */
+    private fun str(id: Int, vararg args: Any): String = appCtx?.getString(id, *args) ?: ""
 
     // PackageName -> IScriptExecutor
     private val activeTargets = ConcurrentHashMap<String, IScriptExecutor>()
@@ -208,13 +221,13 @@ object IpcManager {
         val service = try { FrameworkState.current() } catch (_: Throwable) { null }
         val mainHandler = Handler(Looper.getMainLooper())
         if (service == null) {
-            mainHandler.post { onResult(false, "未连接 LSPosed XposedService") }
+            mainHandler.post { onResult(false, str(R.string.ipc_framework_not_connected)) }
             return
         }
         try {
             service.requestScope(listOf(packageName), object : io.github.libxposed.service.XposedService.OnScopeEventListener {
                 override fun onScopeRequestApproved(approved: List<String>) {
-                    mainHandler.post { onResult(true, "已授权: ${approved.joinToString(", ")}") }
+                    mainHandler.post { onResult(true, str(R.string.ipc_scope_granted, approved.joinToString(", "))) }
                 }
 
                 override fun onScopeRequestFailed(message: String) {
@@ -222,7 +235,7 @@ object IpcManager {
                 }
             })
         } catch (t: Throwable) {
-            mainHandler.post { onResult(false, "请求异常: ${t.message}") }
+            mainHandler.post { onResult(false, str(R.string.ipc_request_failed, t.message ?: "")) }
         }
     }
 
@@ -234,7 +247,7 @@ object IpcManager {
         val service = try { FrameworkState.current() } catch (_: Throwable) { null }
         val mainHandler = Handler(Looper.getMainLooper())
         if (service == null) {
-            mainHandler.post { onResult(HotReloadResult(HotReloadResult.Status.FAILED, "未连接 LSPosed XposedService")) }
+            mainHandler.post { onResult(HotReloadResult(HotReloadResult.Status.FAILED, str(R.string.ipc_framework_not_connected))) }
             return
         }
         try {
@@ -244,7 +257,7 @@ object IpcManager {
                 }
             })
         } catch (t: Throwable) {
-            mainHandler.post { onResult(HotReloadResult(HotReloadResult.Status.FAILED, "请求异常: ${t.message}")) }
+            mainHandler.post { onResult(HotReloadResult(HotReloadResult.Status.FAILED, str(R.string.ipc_request_failed, t.message ?: ""))) }
         }
     }
 
@@ -259,7 +272,7 @@ object IpcManager {
         }
         val total = stale.size
         if (total == 0) {
-            Handler(Looper.getMainLooper()).post { onResult(0, 0, "无待热重载目标（STALE）") }
+            Handler(Looper.getMainLooper()).post { onResult(0, 0, str(R.string.ipc_hot_reload_none)) }
             return
         }
         var done = 0
@@ -270,7 +283,7 @@ object IpcManager {
                 Log.i(TAG, "[hot] ${target.processName} -> ${result.status} ${result.message ?: ""}")
                 if (done == total) {
                     Handler(Looper.getMainLooper()).post {
-                        onResult(done, total, "热重载完成 $done/$total（最后: ${result.status}${result.message?.let { " $it" } ?: ""}）")
+                        onResult(done, total, str(R.string.ipc_hot_reload_done, done, total, result.status.toString() + (result.message?.let { " $it" } ?: "")))
                     }
                 }
             }

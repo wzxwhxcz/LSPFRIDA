@@ -1,6 +1,254 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English (default). Chinese mirror: res/values-zh/strings.xml (same names, 1:1). -->
 <resources>
+    <!-- Brand name: never translated. -->
     <string name="app_name">LSPFRIFA</string>
-    <string name="btn_refresh">刷新</string>
-    <string name="btn_push">推送运行</string>
-    <string name="hint_script">在此输入 Frida JS 脚本…</string>
+    <string name="btn_refresh">Refresh</string>
+    <string name="btn_push">Push and run</string>
+    <string name="hint_script">Enter a Frida JS script here…</string>
+
+    <!-- Shared action labels used across screens. -->
+    <string name="common_back">Back</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_retry">Retry</string>
+
+    <!-- Framework / hot-reload status messages (IpcManager). -->
+    <string name="ipc_framework_not_connected">LSPosed XposedService is not connected</string>
+    <string name="ipc_scope_granted">Authorized: %1$s</string>
+    <string name="ipc_request_failed">Request failed: %1$s</string>
+    <string name="ipc_hot_reload_none">No STALE targets to hot reload</string>
+    <string name="ipc_hot_reload_done">Hot reload finished %1$d/%2$d (last: %3$s)</string>
+
+    <!-- Script import validation (ScriptImport). -->
+    <string name="script_import_open_stream_failed">Cannot open the input stream</string>
+    <string name="script_import_read_failed">Read error</string>
+    <string name="script_import_warn_bom">Removed the UTF-8 BOM</string>
+    <string name="script_import_warn_bad_chars">Found %1$d undecodable characters; the file may not be UTF-8</string>
+    <string name="script_import_warn_braces">Unbalanced braces (off by %1$d); the file may be truncated</string>
+    <string name="script_import_warn_while_true">Contains a while(true) loop: an endless loop in the module will freeze the whole JS thread (no preemption)</string>
+
+    <!-- Injection hint toast shown in the target process. -->
+    <string name="inject_hint_done">LSPFRIFA injected: %1$s</string>
+
+    <!-- ===== nav: nav screen strings ===== -->
+    <!-- Bottom navigation labels (MainActivity). -->
+    <string name="nav_home">Home</string>
+    <string name="nav_projects">Projects</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- ===== dash: dash screen strings ===== -->
+    <string name="dash_status_activated">Activated</string>
+    <string name="dash_status_rootless">Rootless mode</string>
+    <string name="dash_active_xp">Activated via Xp %1$d</string>
+    <string name="dash_xposed_detected">Xposed framework detected</string>
+    <string name="dash_xposed_not_detected">Xposed framework not detected</string>
+
+    <string name="dash_projects">Project analysis</string>
+    <string name="dash_active_processes">Active processes</string>
+
+    <string name="dash_software_version">Software version</string>
+    <string name="dash_api_version">API version</string>
+    <string name="dash_device_model">Device model</string>
+    <string name="dash_android_version">Android version</string>
+
+    <string name="dash_project_intro">Overview</string>
+    <string name="dash_intro_body">LSPFRIFA is a dynamic analysis assistant built on Frida GumJS and libxposed. Write JavaScript scripts to run dynamic analysis, collect logs, and automate tasks inside target apps.</string>
+
+    <string name="dash_docs_title">Plugin docs</string>
+    <string name="dash_docs_summary">Read about scripts, injection, and logs</string>
+    <string name="dash_docs_steps">How to use:\n\n1. On the Projects tab, pick a target app and open its details.\n2. Write a JavaScript script (Frida GumJS / QuickJS).\n3. Tap Run script to push and hot reload it; scripts are saved automatically and load when the target app cold starts.\n4. Open the Analysis tab to watch live logs (console.log / send).\n5. The switch on the right of each project quickly enables or disables hooking for that app.\n\nNote: only selected target apps are injected (critical system processes are excluded).</string>
+    <string name="dash_got_it">Got it</string>
+
+    <!-- ===== proj: proj screen strings ===== -->
+    <string name="proj_title">Projects</string>
+    <string name="proj_empty_title">No projects yet</string>
+    <string name="proj_empty_hint">Tap the + button in the bottom-right corner to add an app</string>
+    <string name="proj_add">Add project</string>
+
+    <!-- ===== select: select screen strings ===== -->
+    <string name="select_title">Select project</string>
+    <string name="select_sort_and_filter">Sort and filter</string>
+    <string name="select_search_hint">Search apps or package names</string>
+
+    <string name="select_sort">Sort</string>
+    <string name="select_sort_name">App name</string>
+    <string name="select_sort_package">Package name</string>
+    <string name="select_sort_install">Install time</string>
+    <string name="select_sort_update">Update time</string>
+    <string name="select_descending">Reverse order</string>
+    <string name="select_hide_system_apps">Hide system apps</string>
+
+    <string name="select_scanning">Scanning installed apps…</string>
+    <string name="select_load_failed">Could not load the app list</string>
+    <string name="select_added">Added</string>
+
+    <!-- ===== detail: detail screen strings ===== -->
+    <string name="detail_delete_project">Delete project</string>
+
+    <!-- Connection / enablement row -->
+    <string name="detail_connection">Connection:</string>
+    <string name="detail_connected">Connected</string>
+    <string name="detail_disconnected">Not connected</string>
+    <string name="detail_script_enabled">Script enabled</string>
+    <string name="detail_script_disabled">Script disabled</string>
+    <string name="detail_request_scope">Request scope</string>
+    <string name="detail_scope_ok">[+] Scope request succeeded: %1$s</string>
+    <string name="detail_scope_fail">[-] Scope request failed: %1$s</string>
+
+    <!-- Circuit breaker -->
+    <string name="detail_circuit_title">Injection paused</string>
+    <string name="detail_circuit_summary">The script failed to load %1$d times in a row, so injection into this app has stopped to avoid affecting every launch. Fix the script, then tap Resume.</string>
+    <string name="detail_resume_injection">Resume injection</string>
+    <string name="detail_resume_done">[+] Injection resumed, it takes effect the next time the target starts</string>
+
+    <!-- Entry rows -->
+    <string name="detail_plugin_summary">JavaScript · QuickJS · Dynamic injection</string>
+    <string name="detail_script_editor">Script editor</string>
+    <string name="detail_script_editor_summary">JavaScript · TextMate highlighting · Autosave</string>
+    <string name="detail_logs">Log</string>
+    <string name="detail_logs_summary">Runtime log · Live stream</string>
+    <string name="detail_library">Script library</string>
+    <string name="detail_library_summary">Imported scripts · Apply / Delete</string>
+
+    <!-- Header tags -->
+    <string name="detail_tag_main_process">Main process</string>
+    <string name="detail_tag_all_processes">All processes</string>
+    <string name="detail_tag_dynamic_scope">Dynamic scope</string>
+
+    <!-- Delete dialog -->
+    <string name="detail_delete_summary">This removes the project from the list and stops injection (the script content is kept, re-adding restores it)</string>
+
+    <!-- ===== editor: editor screen strings ===== -->
+    <string name="editor_import_script">Import script</string>
+    <string name="editor_undo">Undo</string>
+    <string name="editor_redo">Redo</string>
+    <string name="editor_run">Run script</string>
+    <string name="editor_saved">Saved</string>
+    <string name="editor_tm_error_fallback">Syntax highlighting unavailable: %1$s</string>
+
+    <!-- Import failures -->
+    <string name="editor_import_fail_empty">Import failed: the content is empty</string>
+    <string name="editor_import_fail_binary">Import failed: looks like a binary file</string>
+    <string name="editor_import_fail_too_large">Import failed: exceeds %1$dKB</string>
+    <string name="editor_import_fail_read">Import failed: %1$s</string>
+
+    <!-- Import results -->
+    <string name="editor_import_applied">Imported and applied (library %1$s)</string>
+    <string name="editor_import_applied_undo">Imported and applied (library %1$s, can undo)</string>
+    <string name="editor_import_local_only">Imported (local only): framework is not connected, it will be delivered once activated</string>
+    <string name="editor_import_size_exceeded">Added to the library, but it exceeds the 400KB delivery limit</string>
+    <string name="editor_import_remote_rejected">Added to the library, but the framework rejected the write (storage full)</string>
+    <string name="editor_undo_done">Import undone, previous version restored</string>
+    <string name="editor_undo_none">Nothing to undo</string>
+
+    <!-- Hot reload results -->
+    <string name="editor_push_target_offline">Target process is not connected; the script was saved and waits for injection</string>
+    <string name="editor_push_ok">Hot reload succeeded</string>
+    <string name="editor_push_local_only">Saved locally only: framework is not connected, it will be delivered once activated</string>
+    <string name="editor_push_size_exceeded">Script too large (limit 400KB), rejected</string>
+    <string name="editor_push_remote_rejected">Framework rejected the write (storage full), shorten the script</string>
+    <string name="editor_push_failed">Failed to load the script, check the log</string>
+
+    <!-- Import source dialog -->
+    <string name="editor_import_source_summary">Choose a source; the content is previewed before it is applied</string>
+    <string name="editor_import_from_file">Import from file</string>
+    <string name="editor_import_from_clipboard">Import from clipboard</string>
+    <string name="editor_undo_import">Undo last import</string>
+
+    <!-- Import preview dialog -->
+    <string name="editor_import_preview_summary">%1$s  ·  %2$d bytes</string>
+    <string name="editor_import_origin">Source: %1$s</string>
+    <string name="editor_import_overwrite">This will replace the current script (the old version is backed up, can undo)</string>
+    <string name="editor_import_apply">Import and apply</string>
+
+    <!-- ===== lib: lib screen strings ===== -->
+    <string name="lib_title">Script library</string>
+    <string name="lib_subtitle_empty">Empty</string>
+    <string name="lib_subtitle_count">%1$d scripts</string>
+
+    <!-- Apply to target -->
+    <string name="lib_need_project">Open this page from a project detail page to apply scripts</string>
+    <string name="lib_content_missing">Script content is missing</string>
+    <string name="lib_applied">Applied to %1$s</string>
+    <string name="lib_local_only">Saved locally only (framework is not connected); it will be delivered once activated</string>
+    <string name="lib_size_exceeded">Exceeds the 400KB delivery limit, not applied</string>
+    <string name="lib_remote_rejected">Framework rejected the write (storage full), not applied</string>
+
+    <!-- Empty state -->
+    <string name="lib_empty_title">No scripts yet</string>
+    <string name="lib_empty_hint">Add scripts from the script editor with Import, using a file or the clipboard. Scripts shared from other apps also land here</string>
+
+    <!-- Delete dialog -->
+    <string name="lib_delete_title">Delete script</string>
+    <string name="lib_delete_summary">This removes “%1$s” from the script library. Copies already applied to projects are not affected (projects keep the injected artifact).</string>
+    <string name="lib_deleted">Deleted “%1$s”</string>
+
+    <!-- ===== log: log screen strings ===== -->
+    <!-- Log viewer screen (LogScreenV1). -->
+    <string name="log_title">Logs</string>
+    <string name="log_live">Live</string>
+    <string name="log_export">Export log</string>
+    <string name="log_clear_full">Clear logs (view and log file)</string>
+    <string name="log_count">%1$d logs</string>
+    <string name="log_empty_cleared">Cleared</string>
+    <string name="log_empty_waiting">Waiting for the target process to connect…</string>
+    <string name="log_back_to_bottom">↓ Back to bottom</string>
+    <string name="log_share_subject">LSPFRIFA log - %1$s</string>
+    <string name="log_clip_label">LSPFRIFA log</string>
+    <string name="log_copy_entry">Copy entry</string>
+
+    <!-- ===== import: import screen strings ===== -->
+    <!-- Shared-script import landing screen (ImportTargetScreen). -->
+    <string name="import_title">Import script</string>
+    <string name="import_meta">%1$s bytes · Source %2$s</string>
+    <string name="import_apply_to">Apply to</string>
+    <string name="import_empty_projects">No projects added yet — you can store it in the library now and add apps to a project later</string>
+    <string name="import_enabled">Enabled</string>
+    <string name="import_disabled">Disabled</string>
+    <string name="import_busy">Working…</string>
+    <string name="import_store_only">Store in library only</string>
+    <string name="import_saved_to_library">Saved to the script library (%1$s)</string>
+    <string name="import_applied">Applied to %1$s (library %2$s)</string>
+    <string name="import_local_only">Saved locally (framework not connected); it will be pushed once activated</string>
+    <string name="import_size_exceeded">Exceeds the 400 KB push limit; stored in the library only</string>
+    <string name="import_remote_rejected">The framework rejected the write (storage full); stored in the library only</string>
+
+    <!-- ===== settings: settings screen strings ===== -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_framework_connected">LSPosed XposedService connected</string>
+    <string name="settings_framework_disconnected">LSPosed XposedService not connected</string>
+
+    <string name="settings_theme_follow_system">Follow system</string>
+    <string name="settings_theme_follow_system_summary">Match the system light and dark setting</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_light_summary">Always use the light theme</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_dark_summary">Always use the dark theme</string>
+
+    <string name="settings_follow_wallpaper">Follow wallpaper</string>
+    <string name="settings_follow_wallpaper_summary_on">Generate the theme from system wallpaper colors (dynamic colors take priority, manual palette is inactive)</string>
+    <string name="settings_follow_wallpaper_summary_off">Generate the theme from system wallpaper colors</string>
+
+    <string name="settings_inject_hint">Injection notice</string>
+    <string name="settings_inject_hint_summary">Show a reminder in the target app after a successful injection (includes the package name)</string>
+
+    <string name="settings_class_load_watch">Class load detection</string>
+    <string name="settings_class_load_watch_summary_on">Scripts hook a target class as soon as it loads (restart running targets to take effect)</string>
+    <string name="settings_class_load_watch_summary_off">Falls back to polling: retries within about 200 ms while the class is not loaded</string>
+
+    <string name="settings_theme_color">Accent color</string>
+
+    <string name="settings_framework_status">Framework status</string>
+    <string name="settings_module_api">Module API</string>
+
+    <string name="settings_hot_reload">Hot reload module</string>
+    <string name="settings_hot_reload_summary">Reload the module code of running targets (STALE) without reopening the target process</string>
+    <string name="settings_hot_reload_pending">Requesting hot reload…</string>
+
+    <string name="settings_scope_mode">Scope mode</string>
+    <string name="settings_scope_mode_summary">Dynamic scope · pick target apps in LSPosed Manager</string>
+
+    <string name="settings_frida_runtime">Frida runtime</string>
+    <string name="settings_about">About</string>
 </resources>

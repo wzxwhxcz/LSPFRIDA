@@ -27,9 +27,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.ipc.IpcManager
 import com.bail.lspfrifa.ui.component.GlassTopAppBar
 import com.bail.lspfrifa.ui.component.UiTokens
@@ -86,11 +89,13 @@ fun ProjectDetailScreenV093(
     var circuitOpen by remember { mutableStateOf(IpcManager.isCircuitOpen(packageName)) }
     var failCount by remember { mutableStateOf(IpcManager.failCount(packageName)) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     /** R1.2：向框架申请作用域；回调已投递主线程，结果写入行内提示。 */
     fun requestScopeCall() {
         IpcManager.requestScope(packageName) { ok, msg ->
-            scopeHint = if (ok) "[+] 作用域申请成功: $msg" else "[-] 作用域申请失败: $msg"
+            scopeHint = if (ok) context.getString(R.string.detail_scope_ok, msg)
+            else context.getString(R.string.detail_scope_fail, msg)
         }
     }
 
@@ -120,7 +125,7 @@ fun ProjectDetailScreenV093(
                     color = Color.Transparent,
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
+                            Icon(imageVector = MiuixIcons.Back, contentDescription = stringResource(R.string.common_back))
                         }
                     },
                     actions = {
@@ -128,7 +133,7 @@ fun ProjectDetailScreenV093(
                         IconButton(onClick = { showDeleteConfirm = true }) {
                             Icon(
                                 imageVector = MiuixIcons.Delete,
-                                contentDescription = "删除项目",
+                                contentDescription = stringResource(R.string.detail_delete_project),
                                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
                         }
@@ -156,23 +161,23 @@ fun ProjectDetailScreenV093(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("连接状态：", fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                Text(stringResource(R.string.detail_connection), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                 Text(
-                    if (connected) "已连接" else "未连接",
+                    if (connected) stringResource(R.string.detail_connected) else stringResource(R.string.detail_disconnected),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = if (connected) Color(0xFF35C759) else MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
-                    if (enabled) "脚本已启用" else "脚本已停用",
+                    if (enabled) stringResource(R.string.detail_script_enabled) else stringResource(R.string.detail_script_disabled),
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
                 Spacer(Modifier.width(10.dp))
                 // R1.2：向框架动态申请作用域
                 Text(
-                    "申请作用域",
+                    stringResource(R.string.detail_request_scope),
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.primary,
                     modifier = Modifier.clickable { requestScopeCall() },
@@ -186,10 +191,10 @@ fun ProjectDetailScreenV093(
             if (circuitOpen) {
                 Spacer(Modifier.height(12.dp))
                 Card(modifier = Modifier.fillMaxWidth(), cornerRadius = UiTokens.CardRadius) {
-                    Text("已暂停注入", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MiuixTheme.colorScheme.error)
+                    Text(stringResource(R.string.detail_circuit_title), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MiuixTheme.colorScheme.error)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "脚本连续 " + failCount + " 次加载失败，已停止对该应用的注入尝试，以免每次启动都受影响。修复脚本后点「恢复」。",
+                        stringResource(R.string.detail_circuit_summary, failCount),
                         fontSize = 12.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
@@ -200,11 +205,11 @@ fun ProjectDetailScreenV093(
                                 withContext(Dispatchers.IO) { IpcManager.closeCircuit(packageName) }
                                 circuitOpen = false
                                 failCount = 0
-                                scopeHint = "[+] 已恢复注入，下次启动目标时生效"
+                                scopeHint = context.getString(R.string.detail_resume_done)
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("恢复注入") }
+                    ) { Text(stringResource(R.string.detail_resume_injection)) }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -229,7 +234,7 @@ fun ProjectDetailScreenV093(
                         }
                     },
                     title = "Frida GumJS",
-                    summary = "JavaScript · QuickJS · 动态注入",
+                    summary = stringResource(R.string.detail_plugin_summary),
                     modifier = Modifier.fillMaxWidth(),
                     startAction = { IconBadge(MiuixIcons.Layers) },
                 )
@@ -242,23 +247,23 @@ fun ProjectDetailScreenV093(
             // 与设置页条目同构，明确表达"进入"动作；Sink 按压反馈为 Miuix 原生。
             EntryRowCard(
                 icon = MiuixIcons.Edit,
-                title = "脚本编辑",
-                summary = "JavaScript · TextMate 高亮 · 自动保存",
+                title = stringResource(R.string.detail_script_editor),
+                summary = stringResource(R.string.detail_script_editor_summary),
                 onClick = onOpenEditor,
             )
             Spacer(Modifier.height(10.dp))
             EntryRowCard(
                 icon = MiuixIcons.ListView,
-                title = "日志",
-                summary = "运行日志 · 实时流",
+                title = stringResource(R.string.detail_logs),
+                summary = stringResource(R.string.detail_logs_summary),
                 onClick = onOpenLogs,
             )
             Spacer(Modifier.height(10.dp))
             // D8：脚本库入口（导入的脚本在此管理；从本页进入才能直接应用到当前目标）
             EntryRowCard(
                 icon = MiuixIcons.Layers,
-                title = "脚本库",
-                summary = "已导入脚本 · 应用 / 删除",
+                title = stringResource(R.string.detail_library),
+                summary = stringResource(R.string.detail_library_summary),
                 onClick = onOpenLibrary,
             )
             Spacer(Modifier.height(14.dp))
@@ -269,8 +274,8 @@ fun ProjectDetailScreenV093(
     // 删除确认弹窗（Miuix 原生弹窗视觉；确认后执行删除并返回列表）
     WindowDialog(
         show = showDeleteConfirm,
-        title = "删除项目",
-        summary = "将从列表移除并停止注入（脚本内容保留，重新添加可恢复）",
+        title = stringResource(R.string.detail_delete_project),
+        summary = stringResource(R.string.detail_delete_summary),
         onDismissRequest = { showDeleteConfirm = false },
     ) {
         Column(
@@ -285,14 +290,14 @@ fun ProjectDetailScreenV093(
                 Button(
                     onClick = { showDeleteConfirm = false },
                     modifier = Modifier.weight(1f),
-                ) { Text("取消") }
+                ) { Text(stringResource(R.string.common_cancel)) }
                 Button(
                     onClick = {
                         showDeleteConfirm = false
                         onDeleteProject()
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text("删除") }
+                ) { Text(stringResource(R.string.common_delete)) }
             }
         }
     }
@@ -315,9 +320,9 @@ private fun ProjectHeaderCard(projectName: String, packageName: String) {
         )
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ProjectTag("主进程")
-            ProjectTag("所有进程")
-            ProjectTag("动态作用域")
+            ProjectTag(stringResource(R.string.detail_tag_main_process))
+            ProjectTag(stringResource(R.string.detail_tag_all_processes))
+            ProjectTag(stringResource(R.string.detail_tag_dynamic_scope))
         }
     }
 }

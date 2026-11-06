@@ -16,9 +16,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.data.AddedProject
 import com.bail.lspfrifa.data.ScriptImport
 import com.bail.lspfrifa.data.ScriptLibraryStore
@@ -62,6 +65,7 @@ fun ImportTargetScreen(
     var busy by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     /** 入库（总是执行，去重）+ 可选应用到目标。 */
     fun commit(targetPkg: String?) {
@@ -73,7 +77,7 @@ fun ImportTargetScreen(
             }
             if (targetPkg == null) {
                 busy = false
-                onDone("已存入脚本库（" + preview.suggestedName + "）")
+                onDone(context.getString(R.string.import_saved_to_library, preview.suggestedName))
                 return@launch
             }
             // 应用到目标：备份旧脚本 → 写新脚本（四态结果如实反馈）
@@ -83,10 +87,10 @@ fun ImportTargetScreen(
             val saved = withContext(Dispatchers.IO) { IpcManager.saveScript(targetPkg, preview.code) }
             busy = false
             val msg = when (saved) {
-                ScriptStore.SaveResult.OK -> "已应用到 " + targetPkg + "（库 " + id.takeLast(6) + "）"
-                ScriptStore.SaveResult.LOCAL_ONLY -> "已存本地（框架未连接）；激活后自动下发"
-                ScriptStore.SaveResult.SIZE_EXCEEDED -> "超出下发上限 400KB，仅入库"
-                ScriptStore.SaveResult.REMOTE_REJECTED -> "框架拒绝写入（容量已满），仅入库"
+                ScriptStore.SaveResult.OK -> context.getString(R.string.import_applied, targetPkg, id.takeLast(6))
+                ScriptStore.SaveResult.LOCAL_ONLY -> context.getString(R.string.import_local_only)
+                ScriptStore.SaveResult.SIZE_EXCEEDED -> context.getString(R.string.import_size_exceeded)
+                ScriptStore.SaveResult.REMOTE_REJECTED -> context.getString(R.string.import_remote_rejected)
             }
             hint = msg
             onDone(msg)
@@ -99,11 +103,11 @@ fun ImportTargetScreen(
         containerColor = MiuixPageBackground(),
         topBar = {
             SmallTopAppBar(
-                title = "导入脚本",
+                title = stringResource(R.string.import_title),
                 subtitle = preview.suggestedName,
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
+                        Icon(imageVector = MiuixIcons.Back, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -121,7 +125,7 @@ fun ImportTargetScreen(
             // 内容概览
             Card(modifier = Modifier.fillMaxWidth(), cornerRadius = UiTokens.CardRadius) {
                 Text(
-                    preview.bytes.toString() + " 字节  ·  来源 " + preview.origin,
+                    stringResource(R.string.import_meta, preview.bytes.toString(), preview.origin),
                     fontSize = 11.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
@@ -139,12 +143,12 @@ fun ImportTargetScreen(
             }
 
             Spacer(Modifier.height(14.dp))
-            Text("应用到", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(stringResource(R.string.import_apply_to), fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(6.dp))
 
             if (projects.isEmpty()) {
                 Text(
-                    "还没有已添加的项目 —— 可先仅入库，之后在项目中添加应用",
+                    stringResource(R.string.import_empty_projects),
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
@@ -170,7 +174,9 @@ fun ImportTargetScreen(
                                 )
                             }
                             Text(
-                                if (project.isEnabled) "已启用" else "未启用",
+                                stringResource(
+                                    if (project.isEnabled) R.string.import_enabled else R.string.import_disabled,
+                                ),
                                 fontSize = 11.sp,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
@@ -185,7 +191,9 @@ fun ImportTargetScreen(
                 onClick = { commit(null) },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (busy) "处理中…" else "仅存入脚本库")
+                Text(
+                    if (busy) stringResource(R.string.import_busy) else stringResource(R.string.import_store_only),
+                )
             }
             hint?.let {
                 Spacer(Modifier.height(10.dp))

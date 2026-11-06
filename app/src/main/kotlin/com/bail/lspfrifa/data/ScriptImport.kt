@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.ipc.ScriptStore
 
 /**
@@ -19,6 +20,17 @@ import com.bail.lspfrifa.ipc.ScriptStore
 object ScriptImport {
 
     private const val TAG = "LSPFRIFA-Import"
+
+    /** 本地化警告/错误文案所需 Context（Application 阶段 [init] 注入）。 */
+    @Volatile
+    private var appCtx: Context? = null
+
+    fun init(context: Context) {
+        appCtx = context.applicationContext
+    }
+
+    /** 取已本地化文案；未 init 属异常时序，回退空串（不落中文硬编码）。 */
+    private fun str(id: Int, vararg args: Any): String = appCtx?.getString(id, *args) ?: ""
 
     /** 小于此值不可能是有效脚本。 */
     private const val MIN_BYTES = 1
@@ -67,13 +79,13 @@ object ScriptImport {
     fun readUri(context: Context, uri: Uri, fromPackage: String? = null): Outcome {
         return try {
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: return Outcome.Failed(Failure.ReadError("无法打开输入流"))
+                ?: return Outcome.Failed(Failure.ReadError(str(R.string.script_import_open_stream_failed)))
             val name = displayName(context, uri) ?: "imported.js"
             val origin = if (fromPackage != null) Origin.share(fromPackage) else Origin.file(uri)
             decode(bytes, name, origin)
         } catch (t: Throwable) {
             Log.w(TAG, "读取失败: " + t.message)
-            Outcome.Failed(Failure.ReadError(t.message ?: "读取异常"))
+            Outcome.Failed(Failure.ReadError(t.message ?: str(R.string.script_import_read_failed)))
         }
     }
 
@@ -100,16 +112,16 @@ object ScriptImport {
 
         if (text.startsWith(BOM)) {
             text = text.substring(1)
-            warnings.add("已去除 UTF-8 BOM")
+            warnings.add(str(R.string.script_import_warn_bom))
         }
         val bad = text.count { it == REPLACEMENT }
-        if (bad > 0) warnings.add("检测到 " + bad + " 个无法解码字符，可能不是 UTF-8")
+        if (bad > 0) warnings.add(str(R.string.script_import_warn_bad_chars, bad))
 
         val brace = balance(text)
-        if (brace != 0) warnings.add("花括号不配平（差 " + brace + "），文件可能被截断")
+        if (brace != 0) warnings.add(str(R.string.script_import_warn_braces, brace))
 
         if (text.contains("while (true)") || text.contains("while(true)")) {
-            warnings.add("包含 while(true) 循环：模块死循环将僵死整个 JS 线程（无抢占）")
+            warnings.add(str(R.string.script_import_warn_while_true))
         }
 
         return Outcome.Ok(

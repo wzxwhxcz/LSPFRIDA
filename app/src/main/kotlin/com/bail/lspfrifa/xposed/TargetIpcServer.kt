@@ -9,6 +9,7 @@ import android.os.IBinder
 import android.os.RemoteException
 import android.widget.Toast
 import android.util.Log
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.ipc.ILogReceiver
 import com.bail.lspfrifa.ipc.IScriptExecutor
 
@@ -111,7 +112,9 @@ class TargetIpcServer(
                 // 注入成功提示（设置开关下发）；Toast 必须在主线程，Binder 回调线程 post 兜底
                 Handler(Looper.getMainLooper()).post {
                     try {
-                        appContext?.let { Toast.makeText(it, "LSPFRIFA 已注入: $targetPackage", Toast.LENGTH_SHORT).show() }
+                        ModuleResources.get(R.string.inject_hint_done, targetPackage)?.let { msg ->
+                            appContext?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
+                        }
                     } catch (_: Throwable) {}
                 }
             }

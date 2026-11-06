@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import com.bail.lspfrifa.R
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
 
@@ -371,6 +372,8 @@ class LSPFRIFAModule : XposedModule() {
 
     /** 初始化链：加载引擎 → 构造 IPC 实体 → 握手宿主 → 拉取持久化脚本。 */
     private fun runInitChain(targetPackage: String, app: android.app.Application) {
+        // i18n：目标进程里的 Context 属于目标包，Toast 文案须用模块自身 Resources 解析。
+        ModuleResources.init(app, getModuleApplicationInfo())
         // D12 熔断闸门：坏脚本已被宿主断闸 → 本次启动直接跳过注入（避免每次启动都受影响）。
         // 闸写在 remote prefs（目标进程可读、宿主可写），用户可在宿主 UI 一键合闸重试。
         try {
@@ -645,7 +648,9 @@ class LSPFRIFAModule : XposedModule() {
         if (!enabled) return
         Handler(Looper.getMainLooper()).post {
             try {
-                Toast.makeText(context, "LSPFRIFA 已注入: $packageName", Toast.LENGTH_SHORT).show()
+                ModuleResources.get(R.string.inject_hint_done, packageName)?.let {
+                    Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+                }
             } catch (_: Throwable) {}
         }
     }

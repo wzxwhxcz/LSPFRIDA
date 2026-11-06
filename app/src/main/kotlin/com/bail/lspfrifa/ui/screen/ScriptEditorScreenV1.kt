@@ -41,6 +41,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.data.ScriptImport
 import com.bail.lspfrifa.data.ScriptLibraryStore
 import com.bail.lspfrifa.ipc.IpcManager
@@ -134,10 +136,11 @@ fun ScriptEditorScreenV1(
         when (outcome) {
             is ScriptImport.Outcome.Ok -> importPreview = outcome.result
             is ScriptImport.Outcome.Failed -> runHint = when (val f = outcome.reason) {
-                ScriptImport.Failure.Empty -> "导入失败：内容为空"
-                ScriptImport.Failure.Binary -> "导入失败：疑似二进制文件"
-                ScriptImport.Failure.TooLarge -> "导入失败：超过 " + (ScriptStore.MAX_SCRIPT_BYTES / 1024) + "KB"
-                is ScriptImport.Failure.ReadError -> "导入失败：" + f.message
+                ScriptImport.Failure.Empty -> ctx.getString(R.string.editor_import_fail_empty)
+                ScriptImport.Failure.Binary -> ctx.getString(R.string.editor_import_fail_binary)
+                ScriptImport.Failure.TooLarge ->
+                    ctx.getString(R.string.editor_import_fail_too_large, ScriptStore.MAX_SCRIPT_BYTES / 1024)
+                is ScriptImport.Failure.ReadError -> ctx.getString(R.string.editor_import_fail_read, f.message)
             }
         }
     }
@@ -165,11 +168,14 @@ fun ScriptEditorScreenV1(
             val saved = withContext(Dispatchers.IO) { IpcManager.saveScript(packageName, script) }
             importPreview = null
             runHint = when (saved) {
-                ScriptStore.SaveResult.OK ->
-                    "已导入并应用（库 " + id.takeLast(6) + (if (backup != null) "，可撤销" else "") + "）"
-                ScriptStore.SaveResult.LOCAL_ONLY -> "已导入（仅本地）：框架未连接，激活后自动下发"
-                ScriptStore.SaveResult.SIZE_EXCEEDED -> "已入库，但超出下发上限 400KB"
-                ScriptStore.SaveResult.REMOTE_REJECTED -> "已入库，但框架拒绝写入（容量已满）"
+                ScriptStore.SaveResult.OK -> ctx.getString(
+                    if (backup != null) R.string.editor_import_applied_undo
+                    else R.string.editor_import_applied,
+                    id.takeLast(6),
+                )
+                ScriptStore.SaveResult.LOCAL_ONLY -> ctx.getString(R.string.editor_import_local_only)
+                ScriptStore.SaveResult.SIZE_EXCEEDED -> ctx.getString(R.string.editor_import_size_exceeded)
+                ScriptStore.SaveResult.REMOTE_REJECTED -> ctx.getString(R.string.editor_import_remote_rejected)
             }
         }
     }
@@ -179,9 +185,9 @@ fun ScriptEditorScreenV1(
             val ok = withContext(Dispatchers.IO) { IpcManager.undoImport(packageName) }
             if (ok) {
                 script = withContext(Dispatchers.IO) { IpcManager.loadScript(packageName) } ?: script
-                runHint = "已撤销导入，恢复上一版"
+                runHint = ctx.getString(R.string.editor_undo_done)
             } else {
-                runHint = "没有可撤销的导入"
+                runHint = ctx.getString(R.string.editor_undo_none)
             }
         }
     }
@@ -191,18 +197,18 @@ fun ScriptEditorScreenV1(
             val alive = withContext(Dispatchers.IO) { IpcManager.isTargetAlive(packageName) }
             if (!alive) {
                 withContext(Dispatchers.IO) { IpcManager.saveScript(packageName, script) }
-                runHint = "目标进程未连接，脚本已保存等待注入"
+                runHint = ctx.getString(R.string.editor_push_target_offline)
                 return@launch
             }
             val result = runCatching {
                 withContext(Dispatchers.IO) { IpcManager.pushScript(packageName, script) }
             }.getOrNull()
             runHint = when (result) {
-                ScriptStore.SaveResult.OK -> "脚本热更新成功"
-                ScriptStore.SaveResult.LOCAL_ONLY -> "仅存本地：框架未连接，激活后自动下发"
-                ScriptStore.SaveResult.SIZE_EXCEEDED -> "脚本超限（上限 400KB），已拒绝"
-                ScriptStore.SaveResult.REMOTE_REJECTED -> "框架拒绝写入（容量已满），请缩小脚本"
-                null -> "脚本加载失败，请检查日志"
+                ScriptStore.SaveResult.OK -> ctx.getString(R.string.editor_push_ok)
+                ScriptStore.SaveResult.LOCAL_ONLY -> ctx.getString(R.string.editor_push_local_only)
+                ScriptStore.SaveResult.SIZE_EXCEEDED -> ctx.getString(R.string.editor_push_size_exceeded)
+                ScriptStore.SaveResult.REMOTE_REJECTED -> ctx.getString(R.string.editor_push_remote_rejected)
+                null -> ctx.getString(R.string.editor_push_failed)
             }
         }
     }
@@ -222,15 +228,15 @@ fun ScriptEditorScreenV1(
                     color = Color.Transparent,
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
+                            Icon(imageVector = MiuixIcons.Back, contentDescription = stringResource(R.string.common_back))
                         }
                     },
                     actions = {
                         // D6：导入入口。图标先用已验证存在的 MiuixIcons.Edit
                         // （导入专用图标未经三查，待 UI 二轮替换；禁用未核对图标是本项目纪律）
-                        ToolbarIcon(MiuixIcons.Edit, "导入脚本") { showImportSource = true }
-                        ToolbarIcon(MiuixIcons.Undo, "撤销") { editorRef?.undo() }
-                        ToolbarIcon(MiuixIcons.Redo, "重做") { editorRef?.redo() }
+                        ToolbarIcon(MiuixIcons.Edit, stringResource(R.string.editor_import_script)) { showImportSource = true }
+                        ToolbarIcon(MiuixIcons.Undo, stringResource(R.string.editor_undo)) { editorRef?.undo() }
+                        ToolbarIcon(MiuixIcons.Redo, stringResource(R.string.editor_redo)) { editorRef?.redo() }
                         Spacer(Modifier.width(4.dp))
                         // 运行：主操作 = primary 色强调
                         IconButton(
@@ -240,7 +246,7 @@ fun ScriptEditorScreenV1(
                         ) {
                             Icon(
                                 imageVector = MiuixIcons.Play,
-                                contentDescription = "运行脚本",
+                                contentDescription = stringResource(R.string.editor_run),
                                 tint = if (enabled) MiuixTheme.colorScheme.primary
                                 else MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 modifier = Modifier.size(22.dp),
@@ -289,14 +295,14 @@ fun ScriptEditorScreenV1(
                 }
                 AnimatedVisibility(visible = tmError != null) {
                     HintCapsule(
-                        tmError?.let { "语法高亮降级: $it" } ?: "",
+                        tmError?.let { stringResource(R.string.editor_tm_error_fallback, it) } ?: "",
                         onDismiss = { tmError = null },
                         tone = HintTone.Warn,
                     )
                 }
                 AnimatedVisibility(visible = savedAt && runHint == null) {
                     Text(
-                        "已保存",
+                        stringResource(R.string.editor_saved),
                         fontSize = 11.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         modifier = Modifier.padding(top = 4.dp),
@@ -310,8 +316,8 @@ fun ScriptEditorScreenV1(
     if (showImportSource) {
         WindowDialog(
             show = true,
-            title = "导入脚本",
-            summary = "选择来源；导入后先预览，确认才应用",
+            title = stringResource(R.string.editor_import_script),
+            summary = stringResource(R.string.editor_import_source_summary),
             onDismissRequest = { showImportSource = false },
         ) {
             Column(
@@ -327,7 +333,7 @@ fun ScriptEditorScreenV1(
                         )
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("从文件导入") }
+                ) { Text(stringResource(R.string.editor_import_from_file)) }
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
@@ -335,7 +341,7 @@ fun ScriptEditorScreenV1(
                         importFromClipboard()
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("从剪贴板导入") }
+                ) { Text(stringResource(R.string.editor_import_from_clipboard)) }
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
@@ -343,7 +349,7 @@ fun ScriptEditorScreenV1(
                         undoImport()
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("撤销上次导入") }
+                ) { Text(stringResource(R.string.editor_undo_import)) }
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -422,8 +428,8 @@ private fun ImportPreviewDialog(
     val head = preview.code.lineSequence().take(12).joinToString("\n")
     WindowDialog(
         show = true,
-        title = "导入脚本",
-        summary = preview.suggestedName + "  ·  " + preview.bytes + " 字节",
+        title = stringResource(R.string.editor_import_script),
+        summary = stringResource(R.string.editor_import_preview_summary, preview.suggestedName, preview.bytes),
         onDismissRequest = onDismiss,
     ) {
         Column(
@@ -431,7 +437,7 @@ private fun ImportPreviewDialog(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                "来源：" + preview.origin,
+                stringResource(R.string.editor_import_origin, preview.origin),
                 fontSize = 11.sp,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
@@ -447,7 +453,7 @@ private fun ImportPreviewDialog(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "将覆盖当前脚本（旧版已自动备份，可撤销）",
+                stringResource(R.string.editor_import_overwrite),
                 fontSize = 11.sp,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
@@ -456,8 +462,8 @@ private fun ImportPreviewDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
-                Button(onClick = onConfirm, modifier = Modifier.weight(1f)) { Text("导入并应用") }
+                Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.common_cancel)) }
+                Button(onClick = onConfirm, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.editor_import_apply)) }
             }
         }
     }

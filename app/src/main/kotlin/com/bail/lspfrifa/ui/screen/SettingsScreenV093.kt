@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -45,6 +46,7 @@ import top.yukonga.miuix.kmp.preference.RadioButtonPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.data.HookModeStore
 import com.bail.lspfrifa.data.InjectHintStore
 import com.bail.lspfrifa.data.ThemeModeStore
@@ -64,9 +66,9 @@ fun SettingsScreenV093(
         listOf(frameworkName, frameworkVersion)
             .filter { it.isNotBlank() }
             .joinToString(" ")
-            .ifBlank { "已连接 LSPosed XposedService" }
+            .ifBlank { stringResource(R.string.settings_framework_connected) }
     } else {
-        "未连接 LSPosed XposedService"
+        stringResource(R.string.settings_framework_disconnected)
     }
     // t4：主题模式单一事实源 ThemeModeStore.mode；选中项由 RadioButtonPreference 标题主色高亮。
     val themeMode by ThemeModeStore.mode.collectAsState()
@@ -74,11 +76,17 @@ fun SettingsScreenV093(
     val keyColorHex by ThemeModeStore.keyColor.collectAsState()
     // R1.3：热重载结果回显（summary 行）
     var hotReloadSummary by remember { mutableStateOf<String?>(null) }
+    val hotReloadPending = stringResource(R.string.settings_hot_reload_pending)
 
     Scaffold(
         containerColor = MiuixPageBackground(),
         contentWindowInsets = WindowInsets(0),
-        topBar = { TopAppBar(title = "设置", largeTitle = "设置") },
+        topBar = {
+            TopAppBar(
+                title = stringResource(R.string.settings_title),
+                largeTitle = stringResource(R.string.settings_title),
+            )
+        },
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -90,20 +98,35 @@ fun SettingsScreenV093(
         ) {
             item {
                 Card(modifier = Modifier.fillMaxWidth(), cornerRadius = UiTokens.CardRadius) {
-                    ThemeModeOption("跟随系统", "与系统深浅色设置保持一致", ColorSchemeMode.System, themeMode)
-                    ThemeModeOption("浅色", "始终使用浅色主题", ColorSchemeMode.Light, themeMode)
-                    ThemeModeOption("深色", "始终使用深色主题", ColorSchemeMode.Dark, themeMode)
+                    ThemeModeOption(
+                        stringResource(R.string.settings_theme_follow_system),
+                        stringResource(R.string.settings_theme_follow_system_summary),
+                        ColorSchemeMode.System,
+                        themeMode,
+                    )
+                    ThemeModeOption(
+                        stringResource(R.string.settings_theme_light),
+                        stringResource(R.string.settings_theme_light_summary),
+                        ColorSchemeMode.Light,
+                        themeMode,
+                    )
+                    ThemeModeOption(
+                        stringResource(R.string.settings_theme_dark),
+                        stringResource(R.string.settings_theme_dark_summary),
+                        ColorSchemeMode.Dark,
+                        themeMode,
+                    )
                     // t6：Monet 动态色开关（ThemeModeStore.wallpaperMonet 实核存在 L44/L72；
                     // 动态优先于下方手选色板，summary 注明）
                     val wallpaperMonet by ThemeModeStore.wallpaperMonet.collectAsState()
                     SwitchPreference(
                         checked = wallpaperMonet,
                         onCheckedChange = { ThemeModeStore.setWallpaperMonet(it) },
-                        title = "跟随壁纸",
+                        title = stringResource(R.string.settings_follow_wallpaper),
                         summary = if (wallpaperMonet) {
-                            "使用系统壁纸颜色生成主题（动态优先，手选色板暂不生效）"
+                            stringResource(R.string.settings_follow_wallpaper_summary_on)
                         } else {
-                            "使用系统壁纸颜色生成主题"
+                            stringResource(R.string.settings_follow_wallpaper_summary_off)
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -116,8 +139,8 @@ fun SettingsScreenV093(
                             hintInject = it
                             InjectHintStore.setEnabled(it)
                         },
-                        title = "注入提示",
-                        summary = "脚本注入成功时在目标应用弹出提醒（含包名）",
+                        title = stringResource(R.string.settings_inject_hint),
+                        summary = stringResource(R.string.settings_inject_hint_summary),
                         modifier = Modifier.fillMaxWidth(),
                     )
                     // D3③：类加载感知（激进模式）
@@ -130,17 +153,17 @@ fun SettingsScreenV093(
                             loadClassWatch = it
                             HookModeStore.setLoadClassWatchEnabled(it)
                         },
-                        title = "类加载感知",
+                        title = stringResource(R.string.settings_class_load_watch),
                         summary = if (loadClassWatch) {
-                            "脚本可在目标类加载时立即挂上（对已运行目标需重启后生效）"
+                            stringResource(R.string.settings_class_load_watch_summary_on)
                         } else {
-                            "默认由轮询兼容：类未加载时约 200ms 内自动重试"
+                            stringResource(R.string.settings_class_load_watch_summary_off)
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     // R2a：主题种子色（预设色板；点击选中/再点取消恢复默认）
                     Text(
-                        "主题色",
+                        stringResource(R.string.settings_theme_color),
                         fontSize = 12.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
@@ -170,38 +193,38 @@ fun SettingsScreenV093(
                     // t4 修正（用户）：统一条目规格（icon 圆底 + 标题 + 副标题；chevron› 为 M3 视觉
                     // 元素已撤销——只对齐信息结构与交互意图；图标全部实核存在（见缺口清单）
                     BasicComponent(
-                        title = "框架状态",
+                        title = stringResource(R.string.settings_framework_status),
                         summary = frameworkSummary,
                         enabled = true,
                         startAction = { IconBadge(MiuixIcons.Info) },
                     )
                     BasicComponent(
-                        title = "模块 API",
+                        title = stringResource(R.string.settings_module_api),
                         summary = "libxposed 102 · API $apiVersion",
                         enabled = true,
                         startAction = { IconBadge(MiuixIcons.Layers) },
                     )
                     BasicComponent(
-                        title = "热重载模块",
-                        summary = hotReloadSummary ?: "重载运行中目标（STALE）的模块代码，免重开目标进程",
+                        title = stringResource(R.string.settings_hot_reload),
+                        summary = hotReloadSummary ?: stringResource(R.string.settings_hot_reload_summary),
                         enabled = active,
                         startAction = { IconBadge(MiuixIcons.Refresh) },
                         // R1.3：对 STALE 目标逐个热重载；回调已在主线程，直接写 UI 状态
                         onClick = {
-                            hotReloadSummary = "热重载请求中..."
+                            hotReloadSummary = hotReloadPending
                             IpcManager.hotReloadStaleTargets { _, _, msg ->
                                 hotReloadSummary = msg
                             }
                         },
                     )
                     BasicComponent(
-                        title = "作用域模式",
-                        summary = "动态作用域 · 由 LSPosed Manager 选择目标应用",
+                        title = stringResource(R.string.settings_scope_mode),
+                        summary = stringResource(R.string.settings_scope_mode_summary),
                         enabled = true,
                         startAction = { IconBadge(MiuixIcons.SearchDevice) },
                     )
                     BasicComponent(
-                        title = "Frida 运行时",
+                        title = stringResource(R.string.settings_frida_runtime),
                         summary = "GumJS · QuickJS · Binder IPC",
                         enabled = true,
                         startAction = { IconBadge(MiuixIcons.Recording) },
@@ -211,7 +234,7 @@ fun SettingsScreenV093(
             item {
                 BasicComponent(
                     modifier = Modifier.fillMaxWidth(),
-                    title = "关于",
+                    title = stringResource(R.string.settings_about),
                     summary = "LSPFRIFA 1.0 · Miuix 0.9.4",
                     titleColor = BasicComponentDefaults.titleColor(),
                     summaryColor = BasicComponentDefaults.summaryColor(),

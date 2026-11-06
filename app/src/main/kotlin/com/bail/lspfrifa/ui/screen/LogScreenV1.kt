@@ -41,6 +41,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.ipc.IpcManager
 import com.bail.lspfrifa.ipc.LogStore
 import com.bail.lspfrifa.ui.component.GlassTopAppBar
@@ -306,10 +308,10 @@ fun LogScreenV1(
         if (text.isNotEmpty()) {
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, "LSPFRIFA 日志 - $projectName")
+                putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.log_share_subject, projectName))
                 putExtra(Intent.EXTRA_TEXT, text)
             }
-            runCatching { context.startActivity(Intent.createChooser(intent, "导出日志")) }
+            runCatching { context.startActivity(Intent.createChooser(intent, context.getString(R.string.log_export))) }
         }
     }
 
@@ -324,12 +326,12 @@ fun LogScreenV1(
                 // t3 紧凑顶栏：Miuix SmallTopAppBar（0.9.4-rc01 实核：title+subtitle+actions；
                 // 返回 + 标题"日志" + 应用名副标 + 清除 action）
                 SmallTopAppBar(
-                    title = "日志",
+                    title = stringResource(R.string.log_title),
                     subtitle = projectName,
                     color = Color.Transparent,
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
+                            Icon(imageVector = MiuixIcons.Back, contentDescription = stringResource(R.string.common_back))
                         }
                     },
                     actions = {
@@ -352,7 +354,7 @@ fun LogScreenV1(
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 Text(
-                                    "实时",
+                                    stringResource(R.string.log_live),
                                     fontSize = 11.sp,
                                     color = MiuixTheme.colorScheme.primary,
                                 )
@@ -362,14 +364,14 @@ fun LogScreenV1(
                         IconButton(onClick = exportLogs) {
                             Icon(
                                 imageVector = MiuixIcons.Share,
-                                contentDescription = "导出日志",
+                                contentDescription = stringResource(R.string.log_export),
                                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
                         }
                         IconButton(onClick = onClear) {
                             Icon(
                                 imageVector = MiuixIcons.Delete,
-                                contentDescription = "清除日志（显示层+文件同步删除）",
+                                contentDescription = stringResource(R.string.log_clear_full),
                                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
                         }
@@ -393,7 +395,7 @@ fun LogScreenV1(
                 // 指标行：t5 仅非空显示（空态 0 条不出"日志 0 条"）；纯文字无色块
                 if (logs.isNotEmpty()) {
                     Text(
-                        "日志 ${logs.size} 条",
+                        stringResource(R.string.log_count, logs.size),
                         fontSize = UiTokens.CaptionSize,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
@@ -411,7 +413,9 @@ fun LogScreenV1(
                             item {
                                 Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
                                     Text(
-                                        if (cleared) "已清除" else "等待目标进程连接…",
+                                        stringResource(
+                                            if (cleared) R.string.log_empty_cleared else R.string.log_empty_waiting,
+                                        ),
                                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                         fontSize = UiTokens.SubtitleSize,
                                     )
@@ -435,7 +439,7 @@ fun LogScreenV1(
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                         ) {
                             Text(
-                                "↓ 回到底部",
+                                stringResource(R.string.log_back_to_bottom),
                                 fontSize = UiTokens.CaptionSize,
                                 color = MiuixTheme.colorScheme.onSecondaryContainer,
                             )
@@ -510,13 +514,13 @@ private fun LogLineRow(line: LogLine) {
                         append(line.message)
                     }
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("LSPFRIFA 日志", full))
+                    cm.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.log_clip_label), full))
                 },
                 modifier = Modifier.size(28.dp),
             ) {
                 Icon(
                     imageVector = MiuixIcons.Copy,
-                    contentDescription = "复制整条",
+                    contentDescription = stringResource(R.string.log_copy_entry),
                     tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.size(14.dp),
                 )

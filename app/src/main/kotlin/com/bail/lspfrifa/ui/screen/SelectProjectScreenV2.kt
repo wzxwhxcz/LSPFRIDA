@@ -22,9 +22,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.data.AppsUiState
 import com.bail.lspfrifa.data.InstalledApp
 import com.bail.lspfrifa.ui.component.AppIconImage
@@ -93,18 +95,18 @@ fun SelectProjectScreenV2(
         containerColor = MiuixPageBackground(),
         topBar = {
             TopAppBar(
-                title = "选择项目",
-                largeTitle = "选择项目",
+                title = stringResource(R.string.select_title),
+                largeTitle = stringResource(R.string.select_title),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
+                        Icon(imageVector = MiuixIcons.Back, contentDescription = stringResource(R.string.common_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { showSortMenu = true }) {
                         Icon(
                             imageVector = MiuixIcons.Sort,
-                            contentDescription = "排序与过滤",
+                            contentDescription = stringResource(R.string.select_sort_and_filter),
                             tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
                     }
@@ -124,7 +126,7 @@ fun SelectProjectScreenV2(
                 onSearch = {},
                 expanded = false,
                 onExpandedChange = {},
-                label = "搜索应用或包名",
+                label = stringResource(R.string.select_search_hint),
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
@@ -162,13 +164,13 @@ fun SelectProjectScreenV2(
     // 排序维度 × 4（单选）→ 倒序（toggle）→ 分隔线 → 隐藏系统应用（toggle 不关闭菜单）
     WindowDialog(
         show = showSortMenu,
-        title = "排序",
+        title = stringResource(R.string.select_sort),
         onDismissRequest = { showSortMenu = false },
     ) {
         Column {
             SortMode.entries.forEachIndexed { index, mode ->
                 DropdownImpl(
-                    text = mode.label,
+                    text = stringResource(mode.labelRes),
                     optionSize = SORT_MENU_ITEM_COUNT,
                     isSelected = sortMode == mode,
                     index = index,
@@ -179,7 +181,7 @@ fun SelectProjectScreenV2(
                 }
             }
             DropdownImpl(
-                text = "倒序",
+                text = stringResource(R.string.select_descending),
                 optionSize = SORT_MENU_ITEM_COUNT,
                 isSelected = descending,
                 index = SortMode.entries.size,
@@ -190,7 +192,7 @@ fun SelectProjectScreenV2(
             }
             HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp))
             DropdownImpl(
-                text = "隐藏系统应用",
+                text = stringResource(R.string.select_hide_system_apps),
                 optionSize = SORT_MENU_ITEM_COUNT,
                 isSelected = hideSystem,
                 index = SortMode.entries.size + 1,
@@ -204,11 +206,11 @@ fun SelectProjectScreenV2(
 }
 
 /** 选择页排序维度（与 LSPosed 作用域选择菜单一致）。 */
-private enum class SortMode(val label: String) {
-    Name("应用名"),
-    Package("包名"),
-    Install("安装时间"),
-    Update("更新时间"),
+private enum class SortMode(val labelRes: Int) {
+    Name(R.string.select_sort_name),
+    Package(R.string.select_sort_package),
+    Install(R.string.select_sort_install),
+    Update(R.string.select_sort_update),
 }
 
 /** 排序菜单总行数（4 维度 + 倒序 + 隐藏系统应用），用于 DropdownImpl 首尾间距计算。 */
@@ -223,7 +225,7 @@ private fun LoadingSelectState(modifier: Modifier) {
     ) {
         CircularProgressIndicator()
         Spacer(Modifier.height(12.dp))
-        Text("正在扫描已安装应用…", color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        Text(stringResource(R.string.select_scanning), color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
     }
 }
 
@@ -234,11 +236,11 @@ private fun ErrorSelectState(modifier: Modifier, message: String, onRetry: () ->
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("应用列表读取失败", fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.select_load_failed), fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text(message, fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
         Spacer(Modifier.height(12.dp))
-        Button(onClick = onRetry) { Text("重试") }
+        Button(onClick = onRetry) { Text(stringResource(R.string.common_retry)) }
     }
 }
 
@@ -271,7 +273,7 @@ private fun SelectableAppCard(
             if (added) {
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    "已添加",
+                    stringResource(R.string.select_added),
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )

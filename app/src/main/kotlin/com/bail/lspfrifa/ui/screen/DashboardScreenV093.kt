@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.dp
@@ -44,6 +45,7 @@ import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.ui.component.MiuixPageBackground
 import com.bail.lspfrifa.ui.component.UiTokens
 
@@ -62,10 +64,14 @@ fun DashboardScreenV093(
     activeProcessCount: Int = 0,
     onOpenSelector: () -> Unit = {},
 ) {
-    val statusTitle = if (isXposedActive) "已激活" else "免 Root 模式"
+    val statusTitle = if (isXposedActive) {
+        stringResource(R.string.dash_status_activated)
+    } else {
+        stringResource(R.string.dash_status_rootless)
+    }
     val statusSummary = if (isXposedActive) {
-        if (apiVersion > 0) "已通过 Xp $apiVersion 激活" else "已检测到 Xposed 框架"
-    } else "未检测到 Xposed 框架"
+        if (apiVersion > 0) stringResource(R.string.dash_active_xp, apiVersion) else stringResource(R.string.dash_xposed_detected)
+    } else stringResource(R.string.dash_xposed_not_detected)
     // 状态绿色：项目既有"已激活"成功色惯例（非 Miuix 语义 token；skill 明确禁止伪造 success/alert token）
     val statusColor = if (isXposedActive) Color(0xFF35C759) else MiuixTheme.colorScheme.primary
     val frameworkText = listOf(frameworkName, frameworkVersion)
@@ -104,14 +110,14 @@ fun DashboardScreenV093(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         HomeMetricCard(
-                            title = "项目分析",
+                            title = stringResource(R.string.dash_projects),
                             value = activeProjectCount.toString(),
                             secondary = activeProcessCount.toString(),
                             modifier = Modifier.fillMaxWidth().weight(1f),
                             onClick = onOpenSelector,
                         )
                         HomeMetricCard(
-                            title = "在线进程",
+                            title = stringResource(R.string.dash_active_processes),
                             value = activeProcessCount.toString(),
                             modifier = Modifier.fillMaxWidth().weight(1f),
                         )
@@ -126,10 +132,10 @@ fun DashboardScreenV093(
                     insideMargin = PaddingValues(horizontal = UiTokens.CardMarginH, vertical = UiTokens.CardMarginV),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(UiTokens.CardSpacing)) {
-                        HomeInfoText("软件版本", "1.0 (1)")
-                        HomeInfoText("API 版本", if (apiVersion > 0) apiVersion.toString() else "?")
-                        HomeInfoText("设备型号", "${Build.MANUFACTURER} ${Build.MODEL}".ifBlank { Build.DEVICE })
-                        HomeInfoText("安卓版本", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+                        HomeInfoText(stringResource(R.string.dash_software_version), "1.0 (1)")
+                        HomeInfoText(stringResource(R.string.dash_api_version), if (apiVersion > 0) apiVersion.toString() else "?")
+                        HomeInfoText(stringResource(R.string.dash_device_model), "${Build.MANUFACTURER} ${Build.MODEL}".ifBlank { Build.DEVICE })
+                        HomeInfoText(stringResource(R.string.dash_android_version), "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
                     }
                 }
             }
@@ -140,10 +146,10 @@ fun DashboardScreenV093(
                     cornerRadius = UiTokens.CardRadius,
                     insideMargin = PaddingValues(horizontal = UiTokens.CardMarginH, vertical = UiTokens.CardMarginV),
                 ) {
-                    Text("项目介绍", fontSize = UiTokens.TitleSize, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.dash_project_intro), fontSize = UiTokens.TitleSize, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "LSPFRIFA 是一个基于 Frida GumJS 与 libxposed 的动态分析助手。通过编写 JavaScript 脚本，可在目标应用内进行动态分析、日志采集与自动化执行。",
+                        stringResource(R.string.dash_intro_body),
                         fontSize = UiTokens.SubtitleSize,
                         lineHeight = 20.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -165,10 +171,10 @@ fun DashboardScreenV093(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("插件文档", fontSize = UiTokens.TitleSize, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.dash_docs_title), fontSize = UiTokens.TitleSize, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                "查看脚本、注入与日志使用说明",
+                                stringResource(R.string.dash_docs_summary),
                                 fontSize = UiTokens.SubtitleSize,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
@@ -188,16 +194,10 @@ fun DashboardScreenV093(
                 insideMargin = PaddingValues(16.dp),
             ) {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    Text("插件文档", fontSize = UiTokens.TitleSize, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.dash_docs_title), fontSize = UiTokens.TitleSize, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        "使用步骤：\n\n" +
-                                "1. 在「项目」页选择目标应用，进入项目详情。\n" +
-                                "2. 编写 JavaScript 脚本（Frida GumJS / QuickJS）。\n" +
-                                "3. 点击「运行脚本」下发并热加载；脚本会自动保存，目标应用冷启动时自动加载。\n" +
-                                "4. 在「分析」页签查看实时日志（console.log / send）。\n" +
-                                "5. 项目列表右侧 Switch 可快速启用/停用目标应用的 Hook。\n\n" +
-                                "提示：只有已选择的目标应用才会被注入（系统关键进程除外）。",
+                        stringResource(R.string.dash_docs_steps),
                         fontSize = UiTokens.SubtitleSize,
                         lineHeight = 21.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -206,7 +206,7 @@ fun DashboardScreenV093(
                     Button(
                         onClick = { showDocs = false },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("知道了") }
+                    ) { Text(stringResource(R.string.dash_got_it)) }
                 }
             }
         }

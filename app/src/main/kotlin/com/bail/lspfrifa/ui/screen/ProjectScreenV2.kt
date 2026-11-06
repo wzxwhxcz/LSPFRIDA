@@ -24,9 +24,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.data.AddedProject
 import com.bail.lspfrifa.ipc.IpcManager
 import com.bail.lspfrifa.ui.component.AppIconImage
@@ -61,7 +63,7 @@ fun ProjectScreenV2(
     Scaffold(
         containerColor = MiuixPageBackground(),
         contentWindowInsets = WindowInsets(0, 0, 0, with(density) { 116.dp.roundToPx() }),
-        topBar = { TopAppBar(title = "项目", largeTitle = "项目") },
+        topBar = { TopAppBar(title = stringResource(R.string.proj_title), largeTitle = stringResource(R.string.proj_title)) },
         modifier = modifier,
     ) { padding ->
         Box(
@@ -74,15 +76,15 @@ fun ProjectScreenV2(
                     modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("暂无项目", fontSize = UiTokens.TitleSize, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.proj_empty_title), fontSize = UiTokens.TitleSize, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "点击右下角 + 按钮添加应用",
+                        stringResource(R.string.proj_empty_hint),
                         fontSize = UiTokens.SubtitleSize,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
                     Spacer(Modifier.height(16.dp))
-                    Button(onClick = onNavigateToSelect) { Text("添加项目") }
+                    Button(onClick = onNavigateToSelect) { Text(stringResource(R.string.proj_add)) }
                 }
             } else {
                 LazyColumn(

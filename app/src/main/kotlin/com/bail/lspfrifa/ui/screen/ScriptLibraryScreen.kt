@@ -19,9 +19,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bail.lspfrifa.R
 import com.bail.lspfrifa.data.ScriptLibraryStore
 import com.bail.lspfrifa.ipc.IpcManager
 import com.bail.lspfrifa.ipc.ScriptStore
@@ -62,6 +65,7 @@ fun ScriptLibraryScreen(
     var pendingDelete by remember { mutableStateOf<ScriptLibraryStore.Entry?>(null) }
     var hint by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     fun reload() {
         entries = ScriptLibraryStore.list()
@@ -71,22 +75,22 @@ fun ScriptLibraryScreen(
     fun applyToTarget(entry: ScriptLibraryStore.Entry) {
         val pkg = targetPackage
         if (pkg.isNullOrBlank()) {
-            hint = "请从项目详情页进入本页，才能应用脚本"
+            hint = context.getString(R.string.lib_need_project)
             return
         }
         scope.launch {
             val code = withContext(Dispatchers.IO) { ScriptLibraryStore.code(entry.id) }
             if (code.isNullOrBlank()) {
-                hint = "脚本内容已丢失"
+                hint = context.getString(R.string.lib_content_missing)
                 return@launch
             }
             withContext(Dispatchers.IO) { IpcManager.backupScript(pkg, IpcManager.loadScript(pkg)) }
             val saved = withContext(Dispatchers.IO) { IpcManager.saveScript(pkg, code) }
             hint = when (saved) {
-                ScriptStore.SaveResult.OK -> "已应用到 " + (targetName ?: pkg)
-                ScriptStore.SaveResult.LOCAL_ONLY -> "仅存本地（框架未连接）；激活后自动下发"
-                ScriptStore.SaveResult.SIZE_EXCEEDED -> "超出下发上限 400KB，未应用"
-                ScriptStore.SaveResult.REMOTE_REJECTED -> "框架拒绝写入（容量已满），未应用"
+                ScriptStore.SaveResult.OK -> context.getString(R.string.lib_applied, targetName ?: pkg)
+                ScriptStore.SaveResult.LOCAL_ONLY -> context.getString(R.string.lib_local_only)
+                ScriptStore.SaveResult.SIZE_EXCEEDED -> context.getString(R.string.lib_size_exceeded)
+                ScriptStore.SaveResult.REMOTE_REJECTED -> context.getString(R.string.lib_remote_rejected)
             }
         }
     }
@@ -95,11 +99,12 @@ fun ScriptLibraryScreen(
         containerColor = MiuixPageBackground(),
         topBar = {
             SmallTopAppBar(
-                title = "脚本库",
-                subtitle = if (entries.isEmpty()) "空" else entries.size.toString() + " 个脚本",
+                title = stringResource(R.string.lib_title),
+                subtitle = if (entries.isEmpty()) stringResource(R.string.lib_subtitle_empty)
+                else stringResource(R.string.lib_subtitle_count, entries.size),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
+                        Icon(imageVector = MiuixIcons.Back, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -123,10 +128,10 @@ fun ScriptLibraryScreen(
 
             if (entries.isEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth(), cornerRadius = UiTokens.CardRadius) {
-                    Text("暂无脚本", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text(stringResource(R.string.lib_empty_title), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "可在脚本编辑页用「导入」从文件或剪贴板添加，也可从其他应用分享脚本进来",
+                        stringResource(R.string.lib_empty_hint),
                         fontSize = 12.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
@@ -171,7 +176,7 @@ fun ScriptLibraryScreen(
                             IconButton(onClick = { pendingDelete = entry }) {
                                 Icon(
                                     imageVector = MiuixIcons.Delete,
-                                    contentDescription = "删除",
+                                    contentDescription = stringResource(R.string.common_delete),
                                     tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 )
                             }
@@ -185,11 +190,11 @@ fun ScriptLibraryScreen(
     }
 
     pendingDelete?.let { entry ->
+        val deletedMsg = stringResource(R.string.lib_deleted, entry.name)
         WindowDialog(
             show = true,
-            title = "删除脚本",
-            summary = "将从脚本库移除「" + entry.name +
-                "」。已应用到项目的副本不受影响（项目保留的是注入产物）。",
+            title = stringResource(R.string.lib_delete_title),
+            summary = stringResource(R.string.lib_delete_summary, entry.name),
             onDismissRequest = { pendingDelete = null },
         ) {
             Column(
@@ -198,17 +203,17 @@ fun ScriptLibraryScreen(
             ) {
                 Spacer(Modifier.height(12.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = { pendingDelete = null }, modifier = Modifier.weight(1f)) { Text("取消") }
+                    Button(onClick = { pendingDelete = null }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.common_cancel)) }
                     Spacer(Modifier.width(10.dp))
                     Button(
                         onClick = {
                             ScriptLibraryStore.remove(entry.id)
                             pendingDelete = null
                             reload()
-                            hint = "已删除「" + entry.name + "」"
+                            hint = deletedMsg
                         },
                         modifier = Modifier.weight(1f),
-                    ) { Text("删除") }
+                    ) { Text(stringResource(R.string.common_delete)) }
                 }
             }
         }

@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -342,11 +343,14 @@ class MainActivity : ComponentActivity() {
     ) {
         var selectedTab by remember { mutableIntStateOf(0) }
         val projects by projectViewModel.addedProjects.collectAsState()
-        val navigationItems = remember {
+        val navHome = stringResource(R.string.nav_home)
+        val navProjects = stringResource(R.string.nav_projects)
+        val navSettings = stringResource(R.string.nav_settings)
+        val navigationItems = remember(navHome, navProjects, navSettings) {
             listOf(
-                NavigationItem("首页", MiuixIcons.Home),
-                NavigationItem("项目", MiuixIcons.ListView),
-                NavigationItem("设置", MiuixIcons.Settings)
+                NavigationItem(navHome, MiuixIcons.Home),
+                NavigationItem(navProjects, MiuixIcons.ListView),
+                NavigationItem(navSettings, MiuixIcons.Settings)
             )
         }
 

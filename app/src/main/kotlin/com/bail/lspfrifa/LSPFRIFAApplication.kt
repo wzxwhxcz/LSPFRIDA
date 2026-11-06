@@ -3,8 +3,10 @@ package com.bail.lspfrifa
 import android.app.Application
 import com.bail.lspfrifa.data.HookModeStore
 import com.bail.lspfrifa.data.InjectHintStore
+import com.bail.lspfrifa.data.ScriptImport
 import com.bail.lspfrifa.data.ScriptLibraryStore
 import com.bail.lspfrifa.data.ThemeModeStore
+import com.bail.lspfrifa.ipc.IpcManager
 import com.bail.lspfrifa.ipc.LogStore
 import com.bail.lspfrifa.ipc.ScriptStore
 import io.github.libxposed.service.XposedService
@@ -26,6 +28,9 @@ class LSPFRIFAApplication : Application(), XposedServiceHelper.OnServiceListener
         InjectHintStore.init(this)
         HookModeStore.init(this)
         LogStore.init(this)
+        // i18n：这两处需要 Context 取字符串资源（框架状态/热重载提示、导入校验警告）。
+        IpcManager.init(this)
+        ScriptImport.init(this)
         XposedServiceHelper.registerListener(this)
     }
 

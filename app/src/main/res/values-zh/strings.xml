@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 中文。与 res/values/strings.xml 的 string name 一一对应（同名列，1:1）。 -->
+<resources>
+    <!-- 品牌名，不翻译。 -->
+    <string name="app_name">LSPFRIFA</string>
+    <string name="btn_refresh">刷新</string>
+    <string name="btn_push">推送运行</string>
+    <string name="hint_script">在此输入 Frida JS 脚本…</string>
+
+    <!-- 跨页面共用的动作文案。 -->
+    <string name="common_back">返回</string>
+    <string name="common_cancel">取消</string>
+    <string name="common_delete">删除</string>
+    <string name="common_retry">重试</string>
+
+    <!-- 框架 / 热重载状态消息（IpcManager）。 -->
+    <string name="ipc_framework_not_connected">未连接 LSPosed XposedService</string>
+    <string name="ipc_scope_granted">已授权: %1$s</string>
+    <string name="ipc_request_failed">请求异常: %1$s</string>
+    <string name="ipc_hot_reload_none">无待热重载目标（STALE）</string>
+    <string name="ipc_hot_reload_done">热重载完成 %1$d/%2$d（最后: %3$s）</string>
+
+    <!-- 脚本导入校验（ScriptImport）。 -->
+    <string name="script_import_open_stream_failed">无法打开输入流</string>
+    <string name="script_import_read_failed">读取异常</string>
+    <string name="script_import_warn_bom">已去除 UTF-8 BOM</string>
+    <string name="script_import_warn_bad_chars">检测到 %1$d 个无法解码字符，可能不是 UTF-8</string>
+    <string name="script_import_warn_braces">花括号不配平（差 %1$d），文件可能被截断</string>
+    <string name="script_import_warn_while_true">包含 while(true) 循环：模块死循环将僵死整个 JS 线程（无抢占）</string>
+
+    <!-- 目标进程内弹出的注入成功提示。 -->
+    <string name="inject_hint_done">LSPFRIFA 已注入: %1$s</string>
+
+    <!-- ===== nav: nav screen strings ===== -->
+    <!-- 底部导航栏文案（MainActivity）。 -->
+    <string name="nav_home">首页</string>
+    <string name="nav_projects">项目</string>
+    <string name="nav_settings">设置</string>
+
+    <!-- ===== dash: dash screen strings ===== -->
+    <string name="dash_status_activated">已激活</string>
+    <string name="dash_status_rootless">免 Root 模式</string>
+    <string name="dash_active_xp">已通过 Xp %1$d 激活</string>
+    <string name="dash_xposed_detected">已检测到 Xposed 框架</string>
+    <string name="dash_xposed_not_detected">未检测到 Xposed 框架</string>
+
+    <string name="dash_projects">项目分析</string>
+    <string name="dash_active_processes">在线进程</string>
+
+    <string name="dash_software_version">软件版本</string>
+    <string name="dash_api_version">API 版本</string>
+    <string name="dash_device_model">设备型号</string>
+    <string name="dash_android_version">安卓版本</string>
+
+    <string name="dash_project_intro">项目介绍</string>
+    <string name="dash_intro_body">LSPFRIFA 是一个基于 Frida GumJS 与 libxposed 的动态分析助手。通过编写 JavaScript 脚本，可在目标应用内进行动态分析、日志采集与自动化执行。</string>
+
+    <string name="dash_docs_title">插件文档</string>
+    <string name="dash_docs_summary">查看脚本、注入与日志使用说明</string>
+    <string name="dash_docs_steps">使用步骤：\n\n1. 在「项目」页选择目标应用，进入项目详情。\n2. 编写 JavaScript 脚本（Frida GumJS / QuickJS）。\n3. 点击「运行脚本」下发并热加载；脚本会自动保存，目标应用冷启动时自动加载。\n4. 在「分析」页签查看实时日志（console.log / send）。\n5. 项目列表右侧 Switch 可快速启用/停用目标应用的 Hook。\n\n提示：只有已选择的目标应用才会被注入（系统关键进程除外）。</string>
+    <string name="dash_got_it">知道了</string>
+
+    <!-- ===== proj: proj screen strings ===== -->
+    <string name="proj_title">项目</string>
+    <string name="proj_empty_title">暂无项目</string>
+    <string name="proj_empty_hint">点击右下角 + 按钮添加应用</string>
+    <string name="proj_add">添加项目</string>
+
+    <!-- ===== select: select screen strings ===== -->
+    <string name="select_title">选择项目</string>
+    <string name="select_sort_and_filter">排序与过滤</string>
+    <string name="select_search_hint">搜索应用或包名</string>
+
+    <string name="select_sort">排序</string>
+    <string name="select_sort_name">应用名</string>
+    <string name="select_sort_package">包名</string>
+    <string name="select_sort_install">安装时间</string>
+    <string name="select_sort_update">更新时间</string>
+    <string name="select_descending">倒序</string>
+    <string name="select_hide_system_apps">隐藏系统应用</string>
+
+    <string name="select_scanning">正在扫描已安装应用…</string>
+    <string name="select_load_failed">应用列表读取失败</string>
+    <string name="select_added">已添加</string>
+
+    <!-- ===== detail: detail screen strings ===== -->
+    <string name="detail_delete_project">删除项目</string>
+
+    <!-- Connection / enablement row -->
+    <string name="detail_connection">连接状态：</string>
+    <string name="detail_connected">已连接</string>
+    <string name="detail_disconnected">未连接</string>
+    <string name="detail_script_enabled">脚本已启用</string>
+    <string name="detail_script_disabled">脚本已停用</string>
+    <string name="detail_request_scope">申请作用域</string>
+    <string name="detail_scope_ok">[+] 作用域申请成功: %1$s</string>
+    <string name="detail_scope_fail">[-] 作用域申请失败: %1$s</string>
+
+    <!-- Circuit breaker -->
+    <string name="detail_circuit_title">已暂停注入</string>
+    <string name="detail_circuit_summary">脚本连续 %1$d 次加载失败，已停止对该应用的注入尝试，以免每次启动都受影响。修复脚本后点「恢复」。</string>
+    <string name="detail_resume_injection">恢复注入</string>
+    <string name="detail_resume_done">[+] 已恢复注入，下次启动目标时生效</string>
+
+    <!-- Entry rows -->
+    <string name="detail_plugin_summary">JavaScript · QuickJS · 动态注入</string>
+    <string name="detail_script_editor">脚本编辑</string>
+    <string name="detail_script_editor_summary">JavaScript · TextMate 高亮 · 自动保存</string>
+    <string name="detail_logs">日志</string>
+    <string name="detail_logs_summary">运行日志 · 实时流</string>
+    <string name="detail_library">脚本库</string>
+    <string name="detail_library_summary">已导入脚本 · 应用 / 删除</string>
+
+    <!-- Header tags -->
+    <string name="detail_tag_main_process">主进程</string>
+    <string name="detail_tag_all_processes">所有进程</string>
+    <string name="detail_tag_dynamic_scope">动态作用域</string>
+
+    <!-- Delete dialog -->
+    <string name="detail_delete_summary">将从列表移除并停止注入（脚本内容保留，重新添加可恢复）</string>
+
+    <!-- ===== editor: editor screen strings ===== -->
+    <string name="editor_import_script">导入脚本</string>
+    <string name="editor_undo">撤销</string>
+    <string name="editor_redo">重做</string>
+    <string name="editor_run">运行脚本</string>
+    <string name="editor_saved">已保存</string>
+    <string name="editor_tm_error_fallback">语法高亮降级: %1$s</string>
+
+    <!-- Import failures -->
+    <string name="editor_import_fail_empty">导入失败：内容为空</string>
+    <string name="editor_import_fail_binary">导入失败：疑似二进制文件</string>
+    <string name="editor_import_fail_too_large">导入失败：超过 %1$dKB</string>
+    <string name="editor_import_fail_read">导入失败：%1$s</string>
+
+    <!-- Import results -->
+    <string name="editor_import_applied">已导入并应用（库 %1$s）</string>
+    <string name="editor_import_applied_undo">已导入并应用（库 %1$s，可撤销）</string>
+    <string name="editor_import_local_only">已导入（仅本地）：框架未连接，激活后自动下发</string>
+    <string name="editor_import_size_exceeded">已入库，但超出下发上限 400KB</string>
+    <string name="editor_import_remote_rejected">已入库，但框架拒绝写入（容量已满）</string>
+    <string name="editor_undo_done">已撤销导入，恢复上一版</string>
+    <string name="editor_undo_none">没有可撤销的导入</string>
+
+    <!-- Hot reload results -->
+    <string name="editor_push_target_offline">目标进程未连接，脚本已保存等待注入</string>
+    <string name="editor_push_ok">脚本热更新成功</string>
+    <string name="editor_push_local_only">仅存本地：框架未连接，激活后自动下发</string>
+    <string name="editor_push_size_exceeded">脚本超限（上限 400KB），已拒绝</string>
+    <string name="editor_push_remote_rejected">框架拒绝写入（容量已满），请缩小脚本</string>
+    <string name="editor_push_failed">脚本加载失败，请检查日志</string>
+
+    <!-- Import source dialog -->
+    <string name="editor_import_source_summary">选择来源；导入后先预览，确认才应用</string>
+    <string name="editor_import_from_file">从文件导入</string>
+    <string name="editor_import_from_clipboard">从剪贴板导入</string>
+    <string name="editor_undo_import">撤销上次导入</string>
+
+    <!-- Import preview dialog -->
+    <string name="editor_import_preview_summary">%1$s  ·  %2$d 字节</string>
+    <string name="editor_import_origin">来源：%1$s</string>
+    <string name="editor_import_overwrite">将覆盖当前脚本（旧版已自动备份，可撤销）</string>
+    <string name="editor_import_apply">导入并应用</string>
+
+    <!-- ===== lib: lib screen strings ===== -->
+    <string name="lib_title">脚本库</string>
+    <string name="lib_subtitle_empty">空</string>
+    <string name="lib_subtitle_count">%1$d 个脚本</string>
+
+    <!-- Apply to target -->
+    <string name="lib_need_project">请从项目详情页进入本页，才能应用脚本</string>
+    <string name="lib_content_missing">脚本内容已丢失</string>
+    <string name="lib_applied">已应用到 %1$s</string>
+    <string name="lib_local_only">仅存本地（框架未连接）；激活后自动下发</string>
+    <string name="lib_size_exceeded">超出下发上限 400KB，未应用</string>
+    <string name="lib_remote_rejected">框架拒绝写入（容量已满），未应用</string>
+
+    <!-- Empty state -->
+    <string name="lib_empty_title">暂无脚本</string>
+    <string name="lib_empty_hint">可在脚本编辑页用「导入」从文件或剪贴板添加，也可从其他应用分享脚本进来</string>
+
+    <!-- Delete dialog -->
+    <string name="lib_delete_title">删除脚本</string>
+    <string name="lib_delete_summary">将从脚本库移除「%1$s」。已应用到项目的副本不受影响（项目保留的是注入产物）。</string>
+    <string name="lib_deleted">已删除「%1$s」</string>
+
+    <!-- ===== log: log screen strings ===== -->
+    <!-- 日志查看页（LogScreenV1）。 -->
+    <string name="log_title">日志</string>
+    <string name="log_live">实时</string>
+    <string name="log_export">导出日志</string>
+    <string name="log_clear_full">清除日志（显示层+文件同步删除）</string>
+    <string name="log_count">日志 %1$d 条</string>
+    <string name="log_empty_cleared">已清除</string>
+    <string name="log_empty_waiting">等待目标进程连接…</string>
+    <string name="log_back_to_bottom">↓ 回到底部</string>
+    <string name="log_share_subject">LSPFRIFA 日志 - %1$s</string>
+    <string name="log_clip_label">LSPFRIFA 日志</string>
+    <string name="log_copy_entry">复制整条</string>
+
+    <!-- ===== import: import screen strings ===== -->
+    <!-- 分享进入脚本的去向页（ImportTargetScreen）。 -->
+    <string name="import_title">导入脚本</string>
+    <string name="import_meta">%1$s 字节  ·  来源 %2$s</string>
+    <string name="import_apply_to">应用到</string>
+    <string name="import_empty_projects">还没有已添加的项目 —— 可先仅入库，之后在项目中添加应用</string>
+    <string name="import_enabled">已启用</string>
+    <string name="import_disabled">未启用</string>
+    <string name="import_busy">处理中…</string>
+    <string name="import_store_only">仅存入脚本库</string>
+    <string name="import_saved_to_library">已存入脚本库（%1$s）</string>
+    <string name="import_applied">已应用到 %1$s（库 %2$s）</string>
+    <string name="import_local_only">已存本地（框架未连接）；激活后自动下发</string>
+    <string name="import_size_exceeded">超出下发上限 400KB，仅入库</string>
+    <string name="import_remote_rejected">框架拒绝写入（容量已满），仅入库</string>
+
+    <!-- ===== settings: settings screen strings ===== -->
+    <string name="settings_title">设置</string>
+    <string name="settings_framework_connected">已连接 LSPosed XposedService</string>
+    <string name="settings_framework_disconnected">未连接 LSPosed XposedService</string>
+
+    <string name="settings_theme_follow_system">跟随系统</string>
+    <string name="settings_theme_follow_system_summary">与系统深浅色设置保持一致</string>
+    <string name="settings_theme_light">浅色</string>
+    <string name="settings_theme_light_summary">始终使用浅色主题</string>
+    <string name="settings_theme_dark">深色</string>
+    <string name="settings_theme_dark_summary">始终使用深色主题</string>
+
+    <string name="settings_follow_wallpaper">跟随壁纸</string>
+    <string name="settings_follow_wallpaper_summary_on">使用系统壁纸颜色生成主题（动态优先，手选色板暂不生效）</string>
+    <string name="settings_follow_wallpaper_summary_off">使用系统壁纸颜色生成主题</string>
+
+    <string name="settings_inject_hint">注入提示</string>
+    <string name="settings_inject_hint_summary">脚本注入成功时在目标应用弹出提醒（含包名）</string>
+
+    <string name="settings_class_load_watch">类加载感知</string>
+    <string name="settings_class_load_watch_summary_on">脚本可在目标类加载时立即挂上（对已运行目标需重启后生效）</string>
+    <string name="settings_class_load_watch_summary_off">默认由轮询兼容：类未加载时约 200ms 内自动重试</string>
+
+    <string name="settings_theme_color">主题色</string>
+
+    <string name="settings_framework_status">框架状态</string>
+    <string name="settings_module_api">模块 API</string>
+
+    <string name="settings_hot_reload">热重载模块</string>
+    <string name="settings_hot_reload_summary">重载运行中目标（STALE）的模块代码，免重开目标进程</string>
+    <string name="settings_hot_reload_pending">热重载请求中...</string>
+
+    <string name="settings_scope_mode">作用域模式</string>
+    <string name="settings_scope_mode_summary">动态作用域 · 由 LSPosed Manager 选择目标应用</string>
+
+    <string name="settings_frida_runtime">Frida 运行时</string>
+    <string name="settings_about">关于</string>
+</resources>
