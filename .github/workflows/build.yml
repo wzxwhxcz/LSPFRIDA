@@ -45,6 +45,11 @@ jobs:
 
       - name: Zygote gate/injector tests
         run: |
+          # build.sh locates jni.h via $JDK_HOME (default: ~/android-sdk/jdk-25,
+          # which only exists on the dev sandbox). Point it at the CI JDK
+          # (actions/setup-java sets JAVA_HOME to Temurin 17, which ships
+          # include/jni.h) so the host gate build can find the JNI headers.
+          export JDK_HOME="$JAVA_HOME"
           cd tools/zygote
           bash test.sh
 

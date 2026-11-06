@@ -33,8 +33,10 @@ check_rc () {
 TMP=$(mktemp -d "/tmp/lspfrifa-e2e.XXXXXX") || exit 1
 DAEMON1_PID=""
 DAEMON2_PID=""
+DAEMON3_PID=""
 MOCK1_PID=""
 MOCK2_PID=""
+MOCK3_PID=""
 
 cleanup () {
   [ -n "$DAEMON1_PID" ] && kill -KILL "$DAEMON1_PID" 2>/dev/null
