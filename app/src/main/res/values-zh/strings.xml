@@ -250,5 +250,15 @@
     <string name="settings_scope_mode_summary">动态作用域 · 由 LSPosed Manager 选择目标应用</string>
 
     <string name="settings_frida_runtime">Frida 运行时</string>
+    <string name="settings_permission_title">权限</string>
+    <string name="settings_permission_app_list">应用列表</string>
+    <string name="settings_permission_app_list_ok">已生效 · 能看到已安装应用</string>
+    <string name="settings_permission_app_list_missing">未生效 · 点我去应用详情里开</string>
+    <string name="settings_permission_overlay">显示在其他应用上方</string>
+    <string name="settings_permission_overlay_ok">已授予</string>
+    <string name="settings_permission_overlay_missing">未授予 · 点我去设置</string>
+    <string name="settings_permission_battery">忽略电池优化</string>
+    <string name="settings_permission_battery_ok">已在白名单 · 后台不会被杀</string>
+    <string name="settings_permission_battery_missing">不在白名单 · 点我去允许</string>
     <string name="settings_about">关于</string>
 </resources>

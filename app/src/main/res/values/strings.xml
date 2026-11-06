@@ -250,5 +250,15 @@
     <string name="settings_scope_mode_summary">Dynamic scope · pick target apps in LSPosed Manager</string>
 
     <string name="settings_frida_runtime">Frida runtime</string>
+    <string name="settings_permission_title">Permissions</string>
+    <string name="settings_permission_app_list">App list</string>
+    <string name="settings_permission_app_list_ok">Granted · can see installed apps</string>
+    <string name="settings_permission_app_list_missing">Not effective · tap to open app details</string>
+    <string name="settings_permission_overlay">Display over other apps</string>
+    <string name="settings_permission_overlay_ok">Granted</string>
+    <string name="settings_permission_overlay_missing">Not granted · tap to open settings</string>
+    <string name="settings_permission_battery">Ignore battery optimization</string>
+    <string name="settings_permission_battery_ok">Whitelisted · won\'t be killed in background</string>
+    <string name="settings_permission_battery_missing">Not whitelisted · tap to allow</string>
     <string name="settings_about">About</string>
 </resources>

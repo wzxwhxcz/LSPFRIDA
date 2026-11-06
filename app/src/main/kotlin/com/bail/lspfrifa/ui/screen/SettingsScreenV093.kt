@@ -15,11 +15,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +56,7 @@ import com.bail.lspfrifa.data.HookModeStore
 import com.bail.lspfrifa.data.InjectHintStore
 import com.bail.lspfrifa.data.ThemeModeStore
 import com.bail.lspfrifa.ipc.IpcManager
+import com.bail.lspfrifa.util.PermissionHelper
 import com.bail.lspfrifa.ui.component.MiuixPageBackground
 import com.bail.lspfrifa.ui.component.UiTokens
 
@@ -96,6 +102,11 @@ fun SettingsScreenV093(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(bottom = 128.dp),
         ) {
+            // 权限自检卡（2026-11-06 真机反馈）：应用从不申请运行时权限，MIUI 特殊权限又不自动弹框，
+            // 在此集中展示三项实核状态，点一行跳到对应系统设置页。
+            item {
+                PermissionCard()
+            }
             item {
                 Card(modifier = Modifier.fillMaxWidth(), cornerRadius = UiTokens.CardRadius) {
                     ThemeModeOption(
@@ -301,6 +312,59 @@ private fun ThemeColorDot(hex: String?, selected: Boolean, onClick: () -> Unit) 
                     .background(MiuixTheme.colorScheme.onSurfaceVariantSummary)
             )
         }
+    }
+}
+
+/**
+ * 权限自检卡：三项实核状态 + 点一行跳系统设置。每次回到设置页（ON_RESUME）重查一次，
+ * 用户在系统设置里改完回来立刻能看到新状态，不用重启应用。
+ */
+@Composable
+private fun PermissionCard() {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var refreshKey by remember { mutableStateOf(0) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshKey++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val appListOk = remember(refreshKey) { PermissionHelper.queryAllPackagesEffective(context) }
+    val overlayOk = remember(refreshKey) { PermissionHelper.canDrawOverlays(context) }
+    val batteryOk = remember(refreshKey) { PermissionHelper.isIgnoringBatteryOptimizations(context) }
+    Card(modifier = Modifier.fillMaxWidth(), cornerRadius = UiTokens.CardRadius) {
+        BasicComponent(
+            title = stringResource(R.string.settings_permission_app_list),
+            summary = stringResource(
+                if (appListOk) R.string.settings_permission_app_list_ok
+                else R.string.settings_permission_app_list_missing
+            ),
+            enabled = true,
+            startAction = { IconBadge(MiuixIcons.Info) },
+            onClick = { PermissionHelper.openAppDetails(context) },
+        )
+        BasicComponent(
+            title = stringResource(R.string.settings_permission_overlay),
+            summary = stringResource(
+                if (overlayOk) R.string.settings_permission_overlay_ok
+                else R.string.settings_permission_overlay_missing
+            ),
+            enabled = true,
+            startAction = { IconBadge(MiuixIcons.Info) },
+            onClick = { PermissionHelper.openOverlaySettings(context) },
+        )
+        BasicComponent(
+            title = stringResource(R.string.settings_permission_battery),
+            summary = stringResource(
+                if (batteryOk) R.string.settings_permission_battery_ok
+                else R.string.settings_permission_battery_missing
+            ),
+            enabled = true,
+            startAction = { IconBadge(MiuixIcons.Info) },
+            onClick = { PermissionHelper.requestIgnoreBatteryOptimizations(context) },
+        )
     }
 }
 
