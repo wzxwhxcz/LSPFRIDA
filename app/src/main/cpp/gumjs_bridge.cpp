@@ -79,6 +79,20 @@ static GMutex g_callback_lock;   // 保护 g_callback / g_callback_mid（交换 
 static jmethodID g_callback_mid = nullptr;   // onScriptMessage 方法 id（注册时缓存）
 static std::atomic<bool> g_locks_ready{false};   // nativeInitEngine 完成标记（锁就绪守卫）
 
+// —— F2 修复：dispatch 与 unload 的生命周期互斥 ——
+// 竞态：nativeDispatchHook 先 load 出 g_js_dispatcher，随后 nativeUnloadScript 把指针清空
+// 并 gum_script_unload_sync 卸载 JS 引擎 → 前者再调用 fn_raw = 调已销毁运行时的函数指针（UAF）。
+// Kotlin 侧的 dispatcherReady 是 check-then-act，关不住这个窗口。
+// 方案：**in-flight 计数**（而不是把整条热路径塞进一把锁）——dispatch 仍然可以多线程并发，
+// unload 只负责"等在场的那几次跑完再拆"。这样既消除 UAF，又不改变回调并发语义。
+static GMutex g_dispatch_lock;
+static GCond g_dispatch_cond;
+static int g_dispatch_inflight = 0;      // 正在 JS 里的 dispatch 数（受 g_dispatch_lock 保护）
+static bool g_dispatch_disabled = false; // unload 期间置位：新 dispatch 直接返回 NULL
+// 本线程自己嵌套了几层 dispatch。quiesce 只等"别人"：若 unload 是从 JS 回调内部触发的
+// （hook 里调 unloadScript 这类路径），等自己会永久死锁。
+static thread_local int t_dispatch_depth = 0;
+
 static LspPending *pending_new(void) {
     LspPending *p = g_slice_new0(LspPending);
     g_cond_init(&p->cond);
@@ -93,6 +107,60 @@ static void pending_free(LspPending *p) {
     g_free(p->inner_args);
     g_slice_free(LspPending, p);
 }
+
+/** F2/F3：进入 JS 执行上下文（成功返回 true）。失败 = 正在卸载，调用方必须按"没进 JS"处理。 */
+static bool dispatch_enter(void) {
+    if (!g_locks_ready.load()) {   // 引擎未就绪：此阶段无并发，无需计数
+        t_dispatch_depth++;
+        return true;
+    }
+    bool ok = false;
+    g_mutex_lock(&g_dispatch_lock);
+    if (!g_dispatch_disabled) {
+        g_dispatch_inflight++;
+        ok = true;
+    }
+    g_mutex_unlock(&g_dispatch_lock);
+    if (ok) t_dispatch_depth++;
+    return ok;
+}
+
+static void dispatch_leave(void) {
+    t_dispatch_depth--;
+    if (!g_locks_ready.load()) return;
+    g_mutex_lock(&g_dispatch_lock);
+    if (--g_dispatch_inflight == 0) g_cond_broadcast(&g_dispatch_cond);
+    g_mutex_unlock(&g_dispatch_lock);
+}
+
+/** 卸载前调用：拒绝新 dispatch，并等**其它线程**在堂的那几次退出。
+ *  只等 "inflight > 本线程嵌套深度"：若 unload 是从 JS 回调内部触发的（hook 里调 unload），
+ *  等自己会永久死锁。返回后即可安全销毁 JS 运行时。 */
+static void dispatch_quiesce(void) {
+    if (!g_locks_ready.load()) return;
+    g_mutex_lock(&g_dispatch_lock);
+    g_dispatch_disabled = true;
+    while (g_dispatch_inflight > t_dispatch_depth) {
+        g_cond_wait(&g_dispatch_cond, &g_dispatch_lock);
+    }
+    g_mutex_unlock(&g_dispatch_lock);
+}
+
+/** 装载完成后重新放行 dispatch。 */
+static void dispatch_resume(void) {
+    if (!g_locks_ready.load()) return;
+    g_mutex_lock(&g_dispatch_lock);
+    g_dispatch_disabled = false;
+    g_cond_broadcast(&g_dispatch_cond);
+    g_mutex_unlock(&g_dispatch_lock);
+}
+
+/** nativeLoadScript 用：无论从哪条 return 出去都重新放行 dispatch。
+ *  装载路径有不少失败分支（create 返回 NULL / error / load 报错），逐个补 resume 太容易漏，
+ *  漏一个就是"一次装载失败后同步通道永久禁用"。用一个作用域守卫兜住全部出口。 */
+struct DispatchResumeGuard {
+    ~DispatchResumeGuard() { dispatch_resume(); }
+};
 
 /** DevilKit 单头仅提供 _frida_* 宏而无 glib 原型：自实现 hash/equal（g_hash_table_new 参数）。 */
 static guint lsp_str_hash(gconstpointer v) {
@@ -635,6 +703,10 @@ JNIEXPORT jstring JNICALL
 Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeDispatchHook(
         JNIEnv *env, jclass, jstring jpayload) {
     if (env == nullptr) return nullptr;
+    // F2：先"进场"再取指针并调用。nativeUnloadScript 会 dispatch_quiesce() 等我们退出后
+    // 才销毁 JS 运行时；否则这里可能拿着已卸载运行时的函数指针调用（UAF）。
+    if (!dispatch_enter()) return nullptr;   // 正在卸载 → 按"没进 JS"处理，Kotlin 走 async 兜底
+    struct DispatchLeave { ~DispatchLeave() { dispatch_leave(); } } leave_guard;
     void *fn_raw = g_js_dispatcher.load(std::memory_order_acquire);
     if (fn_raw == nullptr) return nullptr;   // 未注册（脚本未加载/已卸载）
 
@@ -822,6 +894,8 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeInitEngine(JNIEnv *env, jclass c
     g_mutex_init(&g_pending_lock);
     g_mutex_init(&g_script_lock);     // 引擎审查修复：g_script 生命周期锁
     g_mutex_init(&g_callback_lock);   // 引擎审查修复：g_callback 交换锁
+    g_mutex_init(&g_dispatch_lock);   // F2/F3：dispatch 与 unload 的生命周期互斥
+    g_cond_init(&g_dispatch_cond);
     g_locks_ready.store(true);
 
     if (!g_gum_inited) {
@@ -856,12 +930,24 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeSetCallback(JNIEnv *env, jclass,
     }
     g_callback_mid = nullptr;
     if (cb != nullptr) {
-        g_callback = env->NewGlobalRef(cb);
+        jobject g = env->NewGlobalRef(cb);
         // 缓存 jmethodID：避免每条消息 GetObjectClass + GetMethodID（高频日志路径开销）
+        jmethodID mid = nullptr;
         jclass cls = env->GetObjectClass(cb);
         if (cls != nullptr) {
-            g_callback_mid = env->GetMethodID(cls, "onScriptMessage", MESSAGE_SIG);
+            mid = env->GetMethodID(cls, "onScriptMessage", MESSAGE_SIG);
             env->DeleteLocalRef(cls);
+        }
+        if (mid == nullptr) {
+            // 拿不到 mid 就不能留下一个"有引用但永远调不通"的 g_callback：on_message 里
+            // `cb != nullptr && mid != nullptr` 会永久静默丢弃所有消息，同时白占一个全局引用。
+            // 这里把悬挂异常清掉（GetMethodID 失败会挂 NoSuchMethodError），不留到后续 JNI。
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (g != nullptr) env->DeleteGlobalRef(g);
+            LOGE("[callback] onScriptMessage not found; callback NOT installed");
+        } else {
+            g_callback = g;
+            g_callback_mid = mid;
         }
     }
     if (locked) g_mutex_unlock(&g_callback_lock);
@@ -882,6 +968,9 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeLoadScript(
 
     // 竞态修复：锁内摘除旧脚本 → 锁外卸载（卸载耗时，不在锁内做）。
     // 修复前：g_script 无锁读写，callJs 线程可能在 unload+unref 之后仍解引用 → UAF。
+    // F2：拆旧运行时前同样要等在途 dispatch 退出（它们还持有旧运行时的函数指针）。
+    dispatch_quiesce();
+    DispatchResumeGuard resume_guard;   // 作用域结束（含所有 return 分支）自动放行
     g_mutex_lock(&g_script_lock);
     GumScript *old_script = g_script;
     g_script = nullptr;
@@ -987,7 +1076,10 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeLoadScript(
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeUnloadScript(JNIEnv *, jclass) {
-    // 第一阶段下行通道：脚本卸载后 JS 侧函数指针必失效（在途 dispatch 竞态窗口由调用方兜底）
+    // F2：先拒绝新 dispatch 并等在场的跑完，再销毁运行时（否则在途 dispatch 会调已释放的
+    // 函数指针 = UAF）。顺序不能反：quiesce 之后指针才允许失效。
+    dispatch_quiesce();
+    // 第一阶段下行通道：脚本卸载后 JS 侧函数指针必失效
     g_js_dispatcher.store(nullptr, std::memory_order_release);
     pending_clear_all();   // RouteB: 清空在途请求
     // 竞态修复：同 nativeLoadScript——锁内摘除、锁外卸载。
@@ -1022,6 +1114,17 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeCallJs(JNIEnv *env, jclass, jstr
     // 竞态修复：锁内取强引用（防与 reload 的 unload+unref 竞争 → UAF）；用毕 unref。
     GumScript *script = lsp_acquire_script();
     if (script == nullptr) return env->NewStringUTF("");
+    // F3：lsp_acquire_script 只保住了 GObject，**没**保住"脚本仍处于 loaded 状态"。
+    // 并发的 nativeUnloadScript 可以在我们 gum_script_post 之前把 JS core 卸掉，
+    // post 就落到已卸载的运行时上。用与 dispatch 同一套 in-flight 守卫：
+    // unload 的 dispatch_quiesce() 会等这里退出，这里的 dispatch_enter() 在卸载中直接失败。
+    if (!dispatch_enter()) {
+        g_object_unref(script);
+        return env->NewStringUTF("");
+    }
+    struct CallJsLeave {
+        ~CallJsLeave() { dispatch_leave(); }
+    } calljs_leave;
 
     // 输入侧 UTF 修复：payload（含用户参数）可能含非 BMP 字符
     gchar *id = lsp_get_utf8(env, jid, "");
@@ -1035,7 +1138,9 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativeCallJs(JNIEnv *env, jclass, jstr
 
     g_mutex_lock(&g_pending_lock);
     if (g_pending == nullptr) {
-        g_pending = g_hash_table_new(lsp_str_hash, lsp_str_equal);
+        // key_destroy = g_free：g_hash_table_insert 用的是 g_strdup(id)，没有 key_destroy
+        // 时每次 remove/销毁都会泄漏那个 strdup 出来的 id 字符串（每次 replace 回调一个）。
+        g_pending = g_hash_table_new_full(lsp_str_hash, lsp_str_equal, g_free, nullptr);
     }
     LspPending *p = (LspPending *)g_hash_table_lookup(g_pending, id);
     if (p == nullptr) {
@@ -1124,6 +1229,14 @@ Java_com_bail_lspfrifa_xposed_GumJsBridge_nativePostOriginalReply(
     // 竞态修复：同 callJs——锁内取强引用，用毕 unref。
     GumScript *script = lsp_acquire_script();
     if (script == nullptr) return;
+    // F3：同 nativeCallJs——强引用不代表"仍在 loaded"，并发 unload 会让 post 落到已卸载的运行时。
+    if (!dispatch_enter()) {
+        g_object_unref(script);
+        return;
+    }
+    struct PostLeave {
+        ~PostLeave() { dispatch_leave(); }
+    } post_leave;
     // 输入侧 UTF 修复：返回值 JSON 可能含非 BMP 字符
     gchar *id = lsp_get_utf8(env, jid, "");
     gchar *retJson = (jretJson != nullptr) ? lsp_get_utf8(env, jretJson, "null") : g_strdup("null");

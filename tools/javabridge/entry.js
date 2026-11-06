@@ -38,9 +38,9 @@ function bindNativeChannel () {
     return null;
   }
 
-  let syncCall;
+  // 只导出 newGlobalRef：adapter 从不删除引用（谁 newGlobalRef 谁负责，删除在 Kotlin 侧）。
+  // lsp_delete_global_ref 仍由 cpp 导出给 Kotlin 用，JS 侧不再绑定它。
   let newGlobalRefFn;
-  let deleteGlobalRefFn;
   try {
     const syncFn = new NativeFunction(
       module.getExportByName('lsp_sync_call'), 'pointer', ['pointer'], { exceptions: 'propagate' });
@@ -58,16 +58,12 @@ function bindNativeChannel () {
     const pinFn = new NativeFunction(
       module.getExportByName('lsp_new_global_ref'), 'pointer', ['pointer'], { exceptions: 'propagate' });
     newGlobalRefFn = (handle) => pinFn(handle);
-    const unpinFn = new NativeFunction(
-      module.getExportByName('lsp_delete_global_ref'), 'void', ['pointer'], { exceptions: 'propagate' });
-    deleteGlobalRefFn = (handle) => unpinFn(handle);
   } catch (e) {
-    logToConsole('global-ref helpers missing: ' + e);
+    logToConsole('global-ref helper missing: ' + e);
     newGlobalRefFn = () => null;
-    deleteGlobalRefFn = () => {};
   }
 
-  return { syncCall, newGlobalRef: newGlobalRefFn, deleteGlobalRef: deleteGlobalRefFn };
+  return { syncCall, newGlobalRef: newGlobalRefFn };
 }
 
 function makeIsInt64 () {
@@ -120,7 +116,6 @@ function bootstrap () {
     setReplacementBackend,
     syncCall: native.syncCall,
     newGlobalRef: native.newGlobalRef,
-    deleteGlobalRef: native.deleteGlobalRef,
     ptr,
     int64,
     nextTick: (fn) => Script.nextTick(fn),

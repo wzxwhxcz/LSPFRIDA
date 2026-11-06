@@ -34,6 +34,9 @@ object IpcManager {
 
     // PackageName -> IScriptExecutor
     private val activeTargets = ConcurrentHashMap<String, IScriptExecutor>()
+    /** 每个包当前生效的死亡监听：重复 register 时先解绑上一条，否则 recipient 会随
+     *  init 链（early/app/deferred 各建一个 TargetIpcServer）越积越多并被 BinderProxy 常驻持有。 */
+    private val deathRecipients = ConcurrentHashMap<String, Pair<IBinder, IBinder.DeathRecipient>>()
 
     // UI 日志监听回调列表
     private val logListeners = mutableListOf<(pkg: String, log: String) -> Unit>()
@@ -56,6 +59,7 @@ object IpcManager {
             override fun binderDied() {
                 Log.w(TAG, "[!] 目标进程已退出: $packageName")
                 activeTargets.remove(packageName)
+                deathRecipients.remove(packageName)
             }
         }
         try {
@@ -65,15 +69,19 @@ object IpcManager {
             return
         }
 
+        // 先登记在线状态：registerLogReceiver 抛错时目标进程**已经**认为握手成功（它的
+        // register_ipc 调用正常返回了），若这里不登记，宿主会把它当成离线直到进程重启。
+        deathRecipients.put(packageName, binder to deathRecipient)?.let { (oldBinder, oldRecipient) ->
+            runCatching { oldBinder.unlinkToDeath(oldRecipient, 0) }
+        }
+        activeTargets[packageName] = executor
         try {
             // 绑定宿主日志接收器
             executor.registerLogReceiver(logReceiverStub)
-            activeTargets[packageName] = executor
             Log.i(TAG, "[+] 目标进程注册成功，当前在线进程数: ${activeTargets.size}")
         } catch (e: RemoteException) {
-            // 注册失败：解除死亡监听，避免泄漏回调
-            runCatching { binder.unlinkToDeath(deathRecipient, 0) }
-            Log.e(TAG, "[-] 注册日志通道失败", e)
+            // 日志通道失败：目标仍在，保留在线状态（脚本下发/热更可用），只是日志会缺
+            Log.e(TAG, "[-] 注册日志通道失败（目标仍在线，仅日志不可用）", e)
         }
     }
 

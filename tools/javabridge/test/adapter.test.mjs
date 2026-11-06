@@ -43,15 +43,23 @@ function makeHarness (options = {}) {
   let backend = null;
   let nativeCallback = null;
 
-  const ptr = (value) => ({
-    __value: value,
-    isNull () { return value === '0x0' || value === '0'; },
-    toString (radix) {
-      if (radix === 16) return value;
-      if (radix === 10) return String(Number.parseInt(value.replace(/[^0-9a-f]/gi, ''), 16) || 0);
-      return value;
-    },
-  });
+  // 忠实复刻 frida NativePointer：toString(16) 给**裸**十六进制（无 0x），
+  // toString() 给带 0x 的形态。adapter 的 hex() 依赖这个行为补前缀。
+  // 测试用符号化 label（'0xclass-com.foo.Bar'）→ 编码成确定性的十六进制地址，
+  // 这样既能断言"是哪个引用"，又保有 NativePointer 的真实字符串形态。
+  const addrOf = (label) => Buffer.from(String(label), 'utf8').toString('hex');
+  const ptr = (label) => {
+    const digits = addrOf(label);
+    return {
+      __label: label,
+      isNull () { return digits === '0'; },
+      toString (radix) {
+        if (radix === 16) return digits;
+        if (radix === 10) return BigInt('0x' + digits).toString();
+        return '0x' + digits;
+      },
+    };
+  };
 
   const Java = {
     vm: {
@@ -91,12 +99,14 @@ function makeHarness (options = {}) {
     syncCall (json) {
       const req = JSON.parse(json);
       calls.sync.push(req);
+      if (options.syncThrowsOnOp === req.op) throw new Error('cpp lsp_sync_call failed');
       return JSON.stringify(syncHandler(req, calls.sync.length - 1));
     },
     newGlobalRef (handle) {
       calls.newGlobalRef.push(handle);
-      return ptr('0xglobal-' + handle.__value);
+      return ptr('0xglobal-' + handle.__label);
     },
+    // adapter 不得删除任何引用（所有权在创建方）：这里记账，专门用来断言"没删过"。
     deleteGlobalRef (handle) {
       calls.deleteGlobalRef.push(handle);
     },
@@ -124,6 +134,9 @@ function makeHarness (options = {}) {
   const adapter = installLspBackend(deps);
   return {
     adapter,
+    ptr,
+    /** 期望的 wire 形态：'0x' + 该 label 的十六进制地址 */
+    wireHex: (label) => '0x' + addrOf(label),
     Java,
     calls,
     nextTickQueue,
@@ -223,11 +236,42 @@ test('implementation = fn：同步 install 消息字段（类/方法/签名/tag/
   assert.equal(install.isStatic, false);
   assert.equal(install.ctor, false);
   assert.equal(install.tag, 'com.foo.Bar#m#int,java.lang.String');
-  // 类对象全局引用（defining loader 正确的来源），且用完立即释放
-  assert.equal(install.clsRef, '0xglobal-0xclass-com.foo.Bar');
-  assert.equal(h.calls.deleteGlobalRef.length, 1);
-  assert.equal(h.calls.newGlobalRef[0].__value, '0xclass-com.foo.Bar');
+  // 类对象全局引用（defining loader 正确的来源）：JS 创建，但**所有权交给 Kotlin**，
+  // JS 侧一个都不许删（2026-11-06 SIGABRT 的根因就是这里多删了一次）。
+  // hex() 必须带 0x 前缀，Kotlin parseHandle 才能无歧义解析（裸十六进制会被当十进制）
+  assert.equal(install.clsRef, h.wireHex('0xglobal-0xclass-com.foo.Bar'));
+  assert.match(install.clsRef, /^0x/);
+  assert.equal(h.calls.newGlobalRef[0].__label, '0xclass-com.foo.Bar');
+  assert.equal(h.calls.deleteGlobalRef.length, 0,
+    'adapter 不得 deleteGlobalRef(clsRef)：Kotlin lookupClass 的 finally 会删，删两次 = ART abort');
   assert.equal(hook.mangler._lspTag, install.tag);
+});
+
+test('implementation = fn：syncCall 抛错时 adapter 也不删 clsRef（无法区分 Kotlin 是否已删）', () => {
+  const h = makeHarness({ syncThrowsOnOp: 'install' });
+  h.adapter.install({});
+  assert.throws(() => setupHook(h), /cpp lsp_sync_call failed/);
+  // Kotlin 是否收到并删掉 clsRef 无从得知 → 猜错就是二次释放，故一律不删。
+  assert.equal(h.calls.deleteGlobalRef.length, 0,
+    'syncCall 异常路径同样不得 deleteGlobalRef：宁可泄漏 1 项，不能二次释放');
+});
+
+test('句柄编码：所有发给 Kotlin 的 __h/clsRef 都带 0x 前缀（Kotlin parseHandle 无歧义）', () => {
+  const h = makeHarness();
+  h.adapter.install({});
+  const hook = setupHook(h, {
+    retType: objectType('java.lang.Object'),
+    argTypes: [objectType('java.lang.Object')],
+    handler: () => ({ $h: h.ptr('0x0badf00d'), $className: 'java.lang.String' }),
+  });
+  const install = h.calls.sync.find(r => r.op === 'install');
+  assert.match(install.clsRef, /^0x[0-9a-f]+$/);
+
+  const reply = p(h.adapter.handleHookPayload(hookPayload(hook, {
+    args: [{ __h: '0x1', __c: 'java.lang.String' }],
+  })));
+  assert.match(reply.r.__h, /^0x[0-9a-f]+$/,
+    '缺 0x 的裸十六进制会被 Kotlin 当十进制解析 → 作用于错误的 jobject');
 });
 
 test('implementation = fn：Kotlin 拒绝时**同步抛错**（不再 fire-and-forget）', () => {
@@ -276,10 +320,15 @@ test('hook 回调：返回对象 wrapper → 用 Java handle 回传（真实对�
   const hook = setupHook(h, {
     retType: objectType('java.lang.Object'),
     argTypes: [intType],
-    handler: () => ({ $h: '0xobject-handle', $className: 'java.lang.String' }),
+    // 真实 frida 里 wrapper.$h 永远是 NativePointer（ptr(...)），不是裸字符串
+    handler: () => ({ $h: h.ptr('0xobject-handle'), $className: 'java.lang.String' }),
   });
   const reply = h.adapter.handleHookPayload(hookPayload(hook, { args: [1] }));
-  assert.deepEqual(p(reply), { kind: 'value', r: { __h: '0xobject-handle' } });
+  // 回给 Kotlin 的必须是**本侧 newGlobalRef 出的独立全局引用**，不是 wrapper.$h 本身：
+  // Kotlin decodeStructured 会 deleteGlobalRef 它，直接给 $h 就是删别人的引用（二次释放）。
+  assert.deepEqual(p(reply), { kind: 'value', r: { __h: h.wireHex('0xglobal-0xobject-handle') } });
+  assert.equal(h.calls.newGlobalRef.slice(-1)[0].__label, '0xobject-handle');
+  assert.equal(h.calls.deleteGlobalRef.length, 0, 'JS 侧不删任何引用');
 });
 
 test('hook 回调：返回 null + 对象类型 → kind=value/null（跳过原方法，Java 拿 null）', () => {
@@ -334,7 +383,7 @@ test('真实 this：Kotlin 传 jobject 指针 → Java.cast(ptr, 声明类, owne
   const reply = h.adapter.handleHookPayload(hookPayload(hook, { this: { __p: '0xfeedbeef' } }));
   assert.deepEqual(p(reply), { kind: 'value', r: 42 });
   assert.ok(sawThis !== null, 'this 必须被真实构造（不是 undefined/null）');
-  assert.equal(sawThis.$h.__value, '0xfeedbeef', 'this.$h 是 Kotlin 传来的真实 jobject');
+  assert.equal(sawThis.$h.__label, '0xfeedbeef', 'this.$h 是 Kotlin 传来的真实 jobject');
 
   const cast = h.calls.cast.at(-1);
   assert.equal(cast.klass, 'com.foo.Bar', '用声明类 cast，且不是 Proxy 占位');
@@ -372,9 +421,27 @@ test('参数解码：字符串/int/boolean/long(__i64)/对象(__h)/NaN 字符串
   assert.equal(received[1], 'str');
   assert.equal(received[2], true);
   assert.equal(received[3].toString(), '9007199254740993');
-  assert.equal(received[4].$h.__value, '0xobjref');
+  assert.equal(received[4].$h.__label, '0xobjref');
   assert.ok(Number.isNaN(received[5]));
   assert.equal(h.calls.cast.at(-1).klass, 'java.lang.String');
+});
+
+test('参数解码：__h 入参只读，JS 侧绝不 deleteGlobalRef（Kotlin 是唯一释放方）', () => {
+  const h = makeHarness();
+  h.adapter.install({});
+  let received = null;
+  const hook = setupHook(h, {
+    argTypes: [objectType('java.lang.Object')],
+    retType: voidType,
+    handler: (o) => { received = o; return undefined; },
+  });
+  h.adapter.handleHookPayload(hookPayload(hook, {
+    args: [{ __h: '0xkotlin-owned', __c: 'java.lang.String' }],
+  }));
+  assert.ok(received !== null);
+  assert.equal(received.$h.__label, '0xkotlin-owned');
+  assert.equal(h.calls.deleteGlobalRef.length, 0,
+    '入参 __h 由 Kotlin 创建并删除；JS 再删一次 = 二次释放 → ART CheckJNI abort');
 });
 
 test('参数解码：char 单字符串、__o 占位降级为 null（不崩）', () => {

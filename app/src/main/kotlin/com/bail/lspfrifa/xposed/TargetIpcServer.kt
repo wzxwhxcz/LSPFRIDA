@@ -69,11 +69,14 @@ class TargetIpcServer(
                     //    为何需要：提前注入下脚本在 TargetIpcServer 构造前就已在跑，
                     //    而本回调注册（构造）到 registerLogReceiver（首次握手）之间存在窗口。
                     EarlyLogBuffer.add(message)
+                    // 只读一次：logReceiver 是 @Volatile 且会被 binderDied/上面 catch 置 null，
+                    // 读两次（`?.` + catch 里的赋值）在断连竞态下会让这一行日志静默丢失。
+                    val receiver = logReceiver
                     try {
-                        logReceiver?.onLog(targetPackage, message)
+                        receiver?.onLog(targetPackage, message)
                     } catch (e: RemoteException) {
                         Log.w(TAG, "宿主日志通道已断开: ${e.message}")
-                        logReceiver = null
+                        if (logReceiver === receiver) logReceiver = null
                     }
                 }
             }
@@ -85,11 +88,12 @@ class TargetIpcServer(
         Log.i("LSPFRIFA-Hook", "[$targetPackage] $message")
         // D14：宿主未上线时进 ring buffer，握手后由 registerLogReceiver 一次性补发
         EarlyLogBuffer.add(message)
+        val receiver = logReceiver   // 只读一次，理由同 onScriptMessage 里的同名处理
         try {
-            logReceiver?.onLog(targetPackage, message)
+            receiver?.onLog(targetPackage, message)
         } catch (e: RemoteException) {
             Log.w(TAG, "宿主日志通道已断开: ${e.message}")
-            logReceiver = null
+            if (logReceiver === receiver) logReceiver = null
         }
     }
 

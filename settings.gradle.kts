@@ -26,3 +26,4 @@ dependencyResolutionManagement {
 rootProject.name = "LSPFRIFA"
 
 include(":app")
+include(":test-target")

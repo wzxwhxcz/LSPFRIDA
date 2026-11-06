@@ -8,8 +8,8 @@
 
 [![License](https://img.shields.io/badge/License-GPL--3.0-3DA639?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![Android](https://img.shields.io/badge/Android-8.0%2B_(API_26)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#-环境要求)
-[![Kotlin](https://img.shields.io/badge/Kotlin-17-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
-[![Frida](https://img.shields.io/badge/Frida_GumJS-17.9.3-EE3124?style=for-the-badge&logo=frida&logoColor=white)](https://frida.re/)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.4.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Frida](https://img.shields.io/badge/Frida_GumJS-17.25.2-EE3124?style=for-the-badge&logo=frida&logoColor=white)](https://frida.re/)
 [![Telegram](https://img.shields.io/badge/Telegram-@lspfrida-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/lspfrida)
 
 **支持一下吧 → [t.me/lspfrida](https://t.me/lspfrida)**
@@ -48,7 +48,7 @@ Java.perform(function () {
 ### ⚡ 引擎与注入
 
 - **双引擎协作**
-  - **脚本层**：Frida GumJS 17.9.3（QuickJS）—— 静态编入 APK，无外部依赖
+  - **脚本层**：Frida GumJS 17.25.2（QuickJS）—— 静态编入 APK，无外部依赖
   - **Hook 层**：`LSP.hook()` → HookRouter → libxposed `hook()`（**LSPlant**）—— A15 真机 ARMED/HIT 全链验证
 - **提前注入**：在 `onPackageReady` 阶段即可注入（早于 `Application.onCreate`），比传统模块更早拿到执行权
 - **类加载感知**：hook 未加载的类不再失败放弃，而是入队等类加载后自动挂上（三级再武装：锚点 flush / 轮询 / loadClass 监听）
@@ -65,7 +65,7 @@ Java.perform(function () {
 | **async 支持**（`await this.method(新参数…)`） | ✅ 可改写参数 |
 | **overload 精确选择**（`.overload('I','java.lang.String')`） | ✅ |
 | `Java.available` / `Java.androidVersion` / `Java.isMainThread` | ✅ |
-| `Java.choose` / `registerClass` / `cast` / `retain` | ❌ 明确报错（可读提示，不静默失败） |
+| `Java.choose` / `registerClass` / `cast` / `retain` / `deoptimize*` / `enumerate*` | ⚠️ 随上游桥提供（源码级确认，未真机逐项验证） |
 
 ### 🎨 界面（Miuix Compose · HyperOS 风格）
 
@@ -73,6 +73,13 @@ Java.perform(function () {
 - **日志系统**：实时流 + 历史持久化（按包/按天，5000 行滚动保留）+ 级别色点 + 复制单条 + 导出全部 + 一键清除
 - **视觉**：玻璃拟态（Liquid Glass）+ 超椭圆卡片 + 悬浮底栏 + **Monet 动态取色**（跟随壁纸）
 - **热更新**：目标 App 在线时，改完脚本点「运行」立即生效，无需重启
+
+### 🌐 双语支持（英文默认 · 中文跟随系统）
+
+- **默认英文**（`app/src/main/res/values/strings.xml`），**中文镜像**（`values-zh/strings.xml`）：标准 Android 资源机制，跟随系统语言自动切换，无代码判断
+- 两份资源各 **177 条** string，name 完全一一对应（实测 1:1，无缺失、无多余），占位符格式一致
+- 只翻译 UI 文案；**日志文本、代码注释、默认脚本模板保持中文**（日志页里看到的运行时日志就是中文，属预期）；LSPosed Manager 里的模块描述（`xposeddescription`）也仍是中文
+- ⚠️ 真机语言切换未实测
 
 ---
 
@@ -106,6 +113,18 @@ flowchart TB
 **关键设计**：JS 侧的 `LSP.hook()` 经消息上行 → `HookRouter` 解析 → `libxposed.hook()`，
 拦截回调再经 **frida:rpc 协议**投回 JS（同步等待 ≤500ms，超时安全兜底）。
 脚本与状态跨进程走 **remote prefs 双通道**，冷启动与热更行为一致。
+
+---
+
+## 📈 项目状态
+
+| 项 | 现状 |
+|---|---|
+| 阶段一：frida-java-bridge 7.0.13 接通 | ✅ 已推送：删除自研 JS shim，改用上游真 bundle；`implementation` 改道 LSPlant，原生 ArtMethod 路径保留为回退；JS ↔ Kotlin 同步通道。真编 APK + 单测通过，**新路径的真机验证未做** |
+| 阶段二：zygote 注入（`tools/zygote/`） | ✅ 已推送：移植 frida-core `zymbiote.c` + `RoboLauncher`，LSPosed 形态、fail-open；host 端到端测试 `PASS: 32 / FAIL: 0`，**真机未验证**。注入器是独立 root CLI（`lspfrifa-zygote`），需手动运行；不运行时行为与阶段一一致 |
+| CI | ✅ `.github/workflows/build.yml` 已上线（push / PR 到 `frida-java`）：JDK 17 · Gradle 9.5.0 · compileSdk 37 · NDK 28.2，devkit 钉 17.25.2；跑 `:app:assembleDebug` + JS 桥单测 + zygote 测试，最近运行全绿 |
+| 英语支持 | ✅ 已完成（见「核心特性」），真机语言切换未实测 |
+| 测试目标 | ✅ `test-target/` 可构建并带真机测试脚本，**真机注入未验证** |
 
 ---
 
@@ -184,22 +203,18 @@ Java.perform(function () {
 ## 🛠️ 从源码构建
 
 > [!IMPORTANT]
-> **唯一手动步骤**：下载 Frida GumJS devkit（因体积 331 MB，未随仓库分发）
+> **唯一手动步骤**：拉取 Frida GumJS devkit（tarball 约 31 MB / 解压后约 356 MB，未随仓库分发）
 
 ```bash
-# 1. 下载 devkit（arm64）
-wget https://github.com/frida/frida/releases/download/17.9.3/frida-gumjs-devkit-17.9.3-android-arm64.tar.xz
+# 1. 拉取 devkit（默认 17.25.2；脚本会拉取 arm64 与 arm 两份）
+bash app/src/main/cpp/fetch_gumjs_devkit.sh
 
-# 2. 解压到 CMake 要求的目录结构
-mkdir -p app/src/main/cpp/frida-gumjs-devkit/arm64-v8a
-tar -xf frida-gumjs-devkit-17.9.3-android-arm64.tar.xz -C app/src/main/cpp/frida-gumjs-devkit/arm64-v8a
-
-# 3. 构建
+# 2. 构建
 ./gradlew :app:assembleDebug
 # 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**工具链**：JDK 17 · Android SDK（build-tools 36 / NDK 28.2）· CMake 3.22+
+**工具链**：JDK 17+ · Gradle 9.5.0 · Android SDK（compileSdk 37 / NDK 28.2.13676358）· CMake 3.22+
 
 <details>
 <summary><b>📱 AndroidIDE / RV2IDE 构建备注（点击展开）</b></summary>
@@ -214,6 +229,32 @@ tar -xf frida-gumjs-devkit-17.9.3-android-arm64.tar.xz -C app/src/main/cpp/frida
 
 ---
 
+## 🧪 测试目标（`test-target/`）
+
+仓库自带一个最小注入目标，用来在真机上验证 Java / Native hook 是否真的生效：
+
+| 项 | 内容 |
+|---|---|
+| 包名 | `com.bail.testtarget`（入口 `MainActivity`，启动即自动各调一次） |
+| Java 侧 | `Target.greet(String)` → logcat `TARGET_JAVA` |
+| Native 侧 | `Target.nativeCompute(Int)`（JNI，`libtarget.so`）→ logcat `TARGET_NATIVE` |
+| Hook 示例 | `test-target/test-hook.js`：`greet.implementation` 改写返回值 + `Interceptor.attach` 挂 Native 导出 |
+| 真机脚本 | `test-target/test-inject.sh`：装 APK / 启动 / 抓 logcat，按 `HOOK_*_FIRED` 标记判定 |
+
+```bash
+bash gradlew :test-target:assembleDebug          # 产物 test-target/build/outputs/apk/debug/test-target-debug.apk
+bash test-target/test-inject.sh [lspfrifa-apk]   # 电脑接手机，adb 已连接
+```
+
+前置（手动）：手机装 LSPosed，LSPFRIDA 模块启用并勾选 `com.bail.testtarget`；在 LSPFRIFA 应用里给该包设置 `test-hook.js`。
+基线的 `TARGET_JAVA` / `TARGET_NATIVE` 必须出现；`HOOK_*_FIRED` 没出现只记 NOTE、不算 FAIL（可能模块未启用或脚本未设置）。
+CI 只构建 `:app:assembleDebug`，不包含本模块。
+
+> [!NOTE]
+> **真机注入尚未验证**：沙盒无 Android 设备与 root 环境，脚本与 hook 需在真机上跑一遍才算数。
+
+---
+
 ## ⚠️ 已知限制
 
 > [!WARNING]
@@ -221,10 +262,11 @@ tar -xf frida-gumjs-devkit-17.9.3-android-arm64.tar.xz -C app/src/main/cpp/frida
 
 | 限制 | 说明 |
 |---|---|
-| 复杂对象参数 | 对象/数组参数为 `__obj` 占位（基础类型映射完整） |
-| 深度 VM API | `Java.choose` / `registerClass` / `cast` / `retain` 等**未实现**（调用会得到可读报错，不会静默失败） |
+| 复杂对象参数 | 同步路径传真实引用（`__p`），编码失败才降级为只读占位；基础类型映射完整（真机未逐项验证） |
+| 深度 VM API | `Java.choose` / `registerClass` / `cast` / `retain` / `deoptimize*` / `enumerate*` 随上游桥提供（源码级确认，未真机逐项验证） |
 | 远程文件通道 | 只读（宿主无法向目标推送文件）→ 脚本分发走 remote prefs |
 | ABI | 仅 **arm64-v8a**（32 位设备不支持） |
+| 真机验证 | 阶段二 zygote 注入、`test-target/` 注入、语言切换均未实测（沙盒无 Android 设备） |
 
 ---
 
@@ -238,6 +280,9 @@ tar -xf frida-gumjs-devkit-17.9.3-android-arm64.tar.xz -C app/src/main/cpp/frida
 | [路线B 事实簿](docs/RouteB-Facts.md) | frida-java-bridge 语义对齐细节 |
 | [官方通道设计](docs/OfficialHookChannel-P0-Design.md) | LSP.hook → LSPlant 链路 |
 | [日志持久化设计](docs/Log-Persistence-Design.md) | 日志系统架构 |
+| [zygote 注入设计](docs/Zygote-Injection-Design.md) | 阶段二 gate 机制 / 线协议 / 环境变量 |
+| [zygote 工具用法](tools/zygote/README.md) | 构建 / CLI / 真机操作 / 已知偏差 |
+| [测试目标](test-target/README.md) | Java + Native hook 真机测试 |
 
 ---
 

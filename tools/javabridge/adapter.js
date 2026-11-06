@@ -34,8 +34,9 @@ const STRATEGY_VIRTUAL = 1;
  * @param {object} deps.Java             上游 Runtime 实例（globalThis.Java 同一对象）
  * @param {function} deps.setReplacementBackend  打过 LSPFRIDA patch 的 android.js 导出
  * @param {function} deps.syncCall       (json: string) => string          JS→Kotlin 同步通道
- * @param {function} deps.newGlobalRef   (ptr) => ptr|null                 钉住 jobject
- * @param {function} deps.deleteGlobalRef (ptr) => void
+ * @param {function} deps.newGlobalRef   (ptr) => ptr|null                 钉住 jobject（本侧唯一
+ *        会创建的全局引用；adapter **不删除**任何引用——拿到 `__h`/`clsRef` 的一方负责删，
+ *        见 decodeValue / backend.replace 的所有权注释）
  * @param {function} deps.ptr            frida `ptr`
  * @param {function} deps.int64          frida `int64`
  * @param {function} deps.nextTick       (fn) => void                      Script.nextTick
@@ -50,7 +51,6 @@ export function installLspBackend (deps) {
     setReplacementBackend,
     syncCall,
     newGlobalRef,
-    deleteGlobalRef,
     ptr,
     int64,
     nextTick,
@@ -89,8 +89,16 @@ export function installLspBackend (deps) {
     return w;
   }
 
+  /**
+   * 句柄 → `"0x…"`（契约 §3.2 的 `<E>` 形状）。
+   *
+   * `0x` 前缀**不能省**：`NativePointer.toString(16)` 给的是裸十六进制，而 Kotlin
+   * `parseHandle` 对不带前缀的串先试十进制——一个全是数字的指针（如 0x1234567890 →
+   * "1234567890"）会被当成十进制解析成另一个地址，于是 `newLocalRef`/`deleteGlobalRef`
+   * 作用在错误的 jobject 上。那就是"删除/使用错误全局引用"的同类事故。
+   */
   function hex (p) {
-    return p === null || p === undefined ? null : p.toString(16);
+    return p === null || p === undefined ? null : '0x' + p.toString(16);
   }
 
   function toPtr (h) {
@@ -116,10 +124,15 @@ export function installLspBackend (deps) {
   // ---------------------------------------------------------------------------
 
   /**
-   * wire -> JS。opts: { deleteRefs?: boolean, declaredClassName?: string }
-   * - `__p`：Kotlin 在本线程拿到的 jobject 裸指针（只读，释放责任在 Kotlin）
-   * - `__h`：Kotlin 钉住的全局引用（只读，Kotlin 在本次回调收尾时释放）
-   * 两者都用 owned=false 包成 wrapper：生命周期 = 本次回调（与上游回调 frame 语义一致）。
+   * wire -> JS。opts: { declaredClassName?: string }
+   * - `__p`：Kotlin 在本线程拿到的 jobject 局部引用裸指针（只读）
+   * - `__h`：Kotlin 钉住的全局引用（只读）
+   * 两者都用 owned=false 包成 wrapper：JS 侧**从不释放**入参引用。
+   *
+   * 释放责任**只有一处：创建方**（`newGlobalRef` 的那一侧）。入参 `__h` 由 Kotlin
+   * [encodeObjectRef] 创建、由 HookRouter 的 refs/回调收尾统一 delete；本函数若再删一次
+   * 就是二次释放，ART CheckJNI 直接 abort（2026-11-06 真机崩溃的同类形态）。
+   * 因此这里**没有** deleteRefs 开关——留一个"可选也删"的入口只会把所有权重新搞模糊。
    */
   function decodeValue (v, opts = {}) {
     if (v === null || v === undefined) return null;
@@ -135,13 +148,7 @@ export function installLspBackend (deps) {
       if (v.__i64 !== undefined) return int64(v.__i64);
       if (v.__h !== undefined || v.__p !== undefined) {
         const h = toPtr(v.__h !== undefined ? v.__h : v.__p);
-        try {
-          return castHandle(h, v.__c !== undefined ? v.__c : opts.declaredClassName, false);
-        } finally {
-          if (v.__h !== undefined && opts.deleteRefs === true) {
-            deleteGlobalRef(h);
-          }
-        }
+        return castHandle(h, v.__c !== undefined ? v.__c : opts.declaredClassName, false);
       }
       if (v.__o !== undefined) {
         log('[lsp] WARN: object argument passed as placeholder (' + v.__o + ')，JS 侧不可用');
@@ -223,11 +230,22 @@ export function installLspBackend (deps) {
     if (retval === null) {
       return JSON.stringify({ kind: 'value', r: null });
     }
+    // 必须是**独立**的全局引用：返回值往往就是入参 wrapper（`return name`）或 this，
+    // 其 $h 是 Kotlin 传进来的局部引用（__p）或其他对象借用的 handle。直接把它交给
+    // Kotlin 会发生两件坏事：
+    //   ① Kotlin decodeStructured 会 deleteGlobalRef(它)——删的可能是入参/this 的引用，
+    //      同一个引用在回调收尾时被再删一次 = 二次释放；
+    //   ② 局部引用在回调返回后即失效（契约 §3.2：释放责任在创建方）。
+    // 故这里复制一份由本侧拥有的全局引用，所有权的唯一依据就是"谁 newGlobalRef"。
     const h = retval.$h;
     if (h === undefined || h === null) {
       return defaultReply('Implementation for ' + meta.methodName + ' returned a non-Java object');
     }
-    return JSON.stringify({ kind: 'value', r: { __h: hex(h) } });
+    const g = newGlobalRef(h);
+    if (g === null || g.isNull()) {
+      return defaultReply('Implementation for ' + meta.methodName + ': newGlobalRef failed');
+    }
+    return JSON.stringify({ kind: 'value', r: { __h: hex(g) } });
   }
 
   function encodePrimitive (v) {
@@ -361,6 +379,13 @@ export function installLspBackend (deps) {
 
       // 类对象全局引用：让 Kotlin 用 bridge 解析出的这个 Class（defining loader 正确），
       // 而不是它自己的 targetLoader + Class.forName（审查 §3 的单点快照缺陷）。
+      //
+      // 所有权：clsRef 由本处 newGlobalRef 创建，但**由 Kotlin 删除**（契约 §2.1："拿到后立即
+      // deleteGlobalRef"，lookupClass 的 finally 无条件删）。这正是 2026-11-06 真机 SIGABRT
+      // 的根因形态——原先这里还有个 finally 再删一次，同一声明两次释放，ART CheckJNI abort。
+      // 因此本函数**不持有也不释放** clsRef：创建方交出所有权，接收方唯一负责释放。
+      // shortcut: syncCall 自身抛错（cpp 执行失败，Kotlin 的 lspSync 没跑到）时这一个全局引用
+      // 不会被任何人释放 = 泄漏 1 项；此时 hook 通道已整体不可用，远优于二次释放直接 abort。
       let clsRef = null;
       try {
         const env = Java.vm.getEnv();
@@ -374,21 +399,17 @@ export function installLspBackend (deps) {
         log('[lsp] WARN: borrowClassHandle failed for ' + cls + ': ' + e);
       }
 
-      let res;
-      try {
-        res = JSON.parse(syncCall(JSON.stringify({
-          op: 'install',
-          cls,
-          method: methodName,
-          sigs,
-          isStatic: !isInstanceMethod,
-          ctor,
-          tag,
-          clsRef: clsRef === null ? null : hex(clsRef),
-        })));
-      } finally {
-        if (clsRef !== null) deleteGlobalRef(clsRef);
-      }
+      // syncCall 失败时**不**回头删 clsRef：无法区分"Kotlin 已删"和"没删"，猜错就是二次释放。
+      const res = JSON.parse(syncCall(JSON.stringify({
+        op: 'install',
+        cls,
+        method: methodName,
+        sigs,
+        isStatic: !isInstanceMethod,
+        ctor,
+        tag,
+        clsRef: clsRef === null ? null : hex(clsRef),
+      })));
 
       if (res === null || res === undefined || res.ok !== true) {
         throw new Error('[lsp] hook install failed (' + (res && res.kind) + '): ' + (res && res.err));

@@ -456,35 +456,47 @@ class HookRouter(
      * @return 命中的已挂 handle 条数（0 = 没挂过）。同步 uninstall 通道需要这个计数来回答
      *         `{"ok":false,"missing":true}`，legacy send 路径忽略返回值（行为零改动）。
      *
-     * @Synchronized 的理由：同步通道的 uninstall 跑在 JS 线程，而 install（armOnClass）和
-     * D3 的三级再武装在别的线程 —— 不加锁时可能出现"uninstall 枚举完 key、arm 又挂上同一个
-     * key"的竞态，表现为"卸了但还在"。两把锁都是本实例的监视器，互不嵌套，无死锁风险。
+     * 锁纪律：**只把"摘 key"放进监视器，`unhook()` 一律在锁外调用**。
+     * 本函数的调用方之一是 JS 线程（同步 uninstall 通道）。`HookHandle.unhook()` 会等该方法的
+     * 在途回调退出，而在途回调可能正卡在 `dispatchHook` 里等 JS 引擎锁——那把锁正被调用本函数的
+     * JS 线程持有。锁内 unhook 就是 AB/BA 死锁：JS 线程等在途回调结束，在途回调等 JS 线程。
+     * 「摘 key」与「arm 同一个 key」的竞态仍然由监视器挡住（摘掉的 key 不会再被卸第二次）。
      */
-    @Synchronized
     private fun unhookByTag(tag: String): Int {
-        // D3：同 tag 的待挂项也该撤（否则“卸了又被迟到挂上”语义矛盾）。
-        // 用“先筛键再逐个 remove”，不依赖 entrySet().removeIf 的容器实现细节。
-        pendingHooks.filterValues { it.tag == tag }.keys.toList()
-            .forEach { k -> pendingHooks.remove(k) }
-        val matched = handles.keys.filter { it.endsWith("#$tag") }
-        matched.forEach { key ->
-            handles.remove(key)?.let { h -> runCatching { h.unhook() } }
+        val doomed = ArrayList<XposedInterface.HookHandle>(4)
+        val n = synchronized(this) {
+            // D3：同 tag 的待挂项也该撤（否则“卸了又被迟到挂上”语义矛盾）。
+            // 用“先筛键再逐个 remove”，不依赖 entrySet().removeIf 的容器实现细节。
+            pendingHooks.filterValues { it.tag == tag }.keys.toList()
+                .forEach { k -> pendingHooks.remove(k) }
+            var removed = 0
+            for (key in handles.keys.filter { it.endsWith("#$tag") }) {
+                handles.remove(key)?.let { h -> doomed.add(h); removed++ }
+            }
+            removed
         }
-        if (matched.isNotEmpty()) hostLog("[lsp-hook] UNHOOKED tag=$tag count=${matched.size}")
-        return matched.size
+        doomed.forEach { h -> runCatching { h.unhook() } }
+        if (n > 0) hostLog("[lsp-hook] UNHOOKED tag=$tag count=$n")
+        return n
     }
 
     /**
      * P1：卸载全部已注册 LSPlant 手柄（HookHandle.unhook 框架 API，幂等）。
      * 用于脚本热更：重载前不清理旧 hook，会导致同方法重复拦截语义残留。
+     *
+     * 锁纪律同 [unhookByTag]：先摘 key，锁外 unhook（这里不取监视器，但同理避免
+     * 持锁做会阻塞的操作）。
      */
     fun unhookAll() {
         // D3：脚本重跑时旧待挂请求已无意义 —— 一并清掉，防止“上一轮脚本的 hook 迟到生效”
         clearPending()
-        val n = handles.size
-        handles.values.forEach { h -> runCatching { h.unhook() } }
-        handles.clear()
-        hostLog("[lsp-hook] UNHOOKED all=$n")
+        val doomed = synchronized(this) {
+            val all = ArrayList<XposedInterface.HookHandle>(handles.values)
+            handles.clear()
+            all
+        }
+        doomed.forEach { h -> runCatching { h.unhook() } }
+        hostLog("[lsp-hook] UNHOOKED all=${doomed.size}")
     }
 
     // ==================== 同步安装通道（契约 §2；JS → lsp_sync_call → 本函数） ====================
@@ -621,17 +633,20 @@ class HookRouter(
     /**
      * 契约 §2.1 的类解析：**先用 clsRef**，无效才回退 forName。
      *
-     * 关于 deleteGlobalRef 的时机：clsRef 是 JS 侧 `lsp_new_global_ref` 钉的一次性凭据，
-     * 契约要求"拿到后**立即**删除"。放在 finally 而不是成功分支，是因为 newLocalRef 失败
-     * （引用失效/已被释放）时也必须删，否则每失败一次泄漏一个全局引用，而全局引用表很小
-     * （ART 默认 512 项），几次泄漏就可能拖垮整个进程的 JNI。
+     * 关于 deleteGlobalRef 的时机：clsRef 是**JS 侧 `newGlobalRef` 创建的**一次性凭据，
+     * 所有权在这里移交——契约 §2.1 要求 Kotlin"拿到后**立即**删除"。所以只要拿到非 0 句柄
+     * 就必须删；newLocalRef 失败（引用失效/已被释放）时同样要删，否则每失败一次泄漏一个
+     * 全局引用（ART 默认 512 项）。
      * 注意：局部引用独立持有对象，删掉全局引用后 `clazz` 仍有效。
+     *
+     * `parseHandle` 返回 0（clsRef 缺失/格式非法）= JS 根本没建引用，这里也就没有可删的东西。
      */
     private fun lookupClass(clsName: String, clsRefRaw: String): ClassLookup {
         val handle = parseHandle(clsRefRaw)
         if (handle != 0L) {
             var fromRef: Any? = null
             try {
+                // 先取局部引用，再删全局引用（顺序不能反：删早了局部引用还没拿到）
                 fromRef = GumJsBridge.newLocalRef(handle)
             } catch (t: Throwable) {
                 runCatching { hostLog("[lsp-hook] SYNC_REF_ERR cls=$clsName err=" + t.message) }
