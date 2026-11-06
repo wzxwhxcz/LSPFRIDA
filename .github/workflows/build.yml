@@ -27,7 +27,7 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-37" "build-tools;35.0.1" \
+            "platforms;android-37.0" "build-tools;35.0.1" \
             "ndk;28.2.13676358" "cmake;3.22.1"
 
       - name: Fetch frida-gumjs devkit (17.25.2, pinned to the local build)
