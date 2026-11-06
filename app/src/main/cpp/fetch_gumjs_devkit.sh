@@ -3,7 +3,7 @@
 # 用途：下载 frida-gumjs devkit 静态库并放入 cpp 目录
 set -e
 
-VERSION="${1:-16.5.9}"
+VERSION="${1:-17.25.2}"
 BASE="https://github.com/frida/frida/releases/download/${VERSION}"
 DEST="$(dirname "$0")"
 
