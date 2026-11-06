@@ -7,6 +7,11 @@
         <package android:name="com.bail.lspfrifa" />
     </queries>
 
+    <!-- MIUI/HyperOS 实测：光有 <queries> 不够，系统仍会把模块包过滤掉
+         （getApplicationInfo 抛 NameNotFoundException），必须再声明
+         QUERY_ALL_PACKAGES（normal 级，装机即授）才能看到其他包。 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/sym_def_app_icon"
