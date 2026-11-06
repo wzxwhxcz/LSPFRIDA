@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Android 11+ 包可见性：没有它目标进程看不到 LSPFRIFA 的 config_provider，
+         binder 握手会报 Unknown authority。见 2026-11-06 真机日志。 -->
+    <queries>
+        <package android:name="com.bail.lspfrifa" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/sym_def_app_icon"
